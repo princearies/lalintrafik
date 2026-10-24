@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Lalintrafik — Peta Komuniti</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0f14; color: #e6edf3;
+               font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position: absolute; inset: 0; }
+
+  .panel {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 12px;
+    padding: 14px; width: 268px; backdrop-filter: blur(8px);
+  }
+  .panel h1 { margin: 0 0 2px; font-size: 16px; }
+  .panel p  { margin: 0 0 12px; color: #8b949e; font-size: 12px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  button {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 8px; padding: 7px 10px; cursor: pointer; font-size: 12px;
+  }
+  button:hover { background: #30363d; }
+  button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .stat { display: flex; justify-content: space-between; font-size: 12px;
+          color: #8b949e; padding: 2px 0; }
+  .stat b { color: #e6edf3; font-variant-numeric: tabular-nums; }
+
+  .log {
+    position: absolute; bottom: 12px; left: 12px; z-index: 10;
+    background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 12px;
+    padding: 10px 12px; width: 340px; max-height: 190px; overflow: auto;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log .ok   { color: #3fb950; }
+  .log .err  { color: #f85149; }
+  .log .info { color: #8b949e; }
+  .log .ws   { color: #58a6ff; }
+
+  .hint { position: absolute; top: 12px; right: 12px; z-index: 10;
+          background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 10px;
+          padding: 8px 11px; font-size: 11px; color: #8b949e; max-width: 250px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel">
+  <h1>Lalintrafik</h1>
+  <p>Laporan komuniti masa nyata</p>
+
+  <div class="row" id="types">
+    <button data-type="ACCIDENT"    class="active">🚨 Kemalangan</button>
+    <button data-type="SPEED_TRAP">📷 Perangkap</button>
+    <button data-type="HAZARD">⚠️ Bahaya</button>
+    <button data-type="TRAFFIC_JAM">🚗 Sesak</button>
+    <button data-type="POLICE">🚔 Polis</button>
+    <button data-type="ROAD_CLOSURE">🚧 Tutup</button>
+  </div>
+
+  <div class="row">
+    <button id="send">📍 Hantar di lokasi saya</button>
+    <button id="locate">🎯 Cari saya</button>
+  </div>
+
+  <div class="row">
+    <button id="toggle-ws">🔌 Sambung WS</button>
+    <button id="route">🧭 Arah ke sini</button>
+  </div>
+
+  <hr style="border:none;border-top:1px solid #21262d;margin:10px 0" />
+
+  <div class="stat"><span>Laporan berdekatan</span><b id="s-count">0</b></div>
+  <div class="stat"><span>Dalam 5 km</span><b id="s-near">0</b></div>
+  <div class="stat"><span>Online (sel ini)</span><b id="s-online">0</b></div>
+  <div class="stat"><span>WebSocket</span><b id="s-ws">terputus</b></div>
+  <div class="stat"><span>Sel geohash</span><b id="s-cell">—</b></div>
+</div>
+
+<div class="hint" id="hint">
+  Menunggu laluan API…
+</div>
+
+<div class="log" id="log"></div>
+
+<script>
+// ============================================================
+//  Konfigurasi
+// ============================================================
+const API_BASE = localStorage.getItem('lalin.api') || 'http://localhost:8787';
+const DEVICE_ID = (() => {
+  let id = localStorage.getItem('lalin.device');
+  if (!id) { id = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('lalin.device', id); }
+  return id;
+})();
+
+const TYPE_META = {
+  ACCIDENT:    { icon: '🚨', color: '#f85149' },
+  SPEED_TRAP:  { icon: '📷', color: '#d29922' },
+  HAZARD:      { icon: '⚠️', color: '#db6d28' },
+  TRAFFIC_JAM: { icon: '🚗', color: '#58a6ff' },
+  POLICE:      { icon: '🚔', color: '#a371f7' },
+  ROAD_CLOSURE:{ icon: '🚧', color: '#f85149' },
+  WEATHER:     { icon: '🌧️', color: '#3fb950' },
+  COMMUNITY:   { icon: '📢', color: '#3fb950' },
+};
+
+const state = {
+  type: 'ACCIDENT',
+  center: { lat: 3.1390, lng: 101.6869 },  // Kuala Lumpur
+  ws: null,
+  markers: new Map(),
+  routeLayer: null,
+  wsRetry: 0,
+};
+
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+
+function log(kind, msg) {
+  const d = document.createElement('div');
+  d.className = kind;
+  const t = new Date().toLocaleTimeString('ms');
+  d.textContent = `${t} ${msg}`;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.children.length > 60) logEl.removeChild(logEl.firstChild);
+}
+
+function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', 'X-Device-Id': DEVICE_ID, ...(opts.headers || {}) };
+  return fetch(API_BASE + path, { ...opts, headers }).then(async (r) => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  });
+}
+
+// ============================================================
+//  geohash (client — untuk sel WS)
+// ============================================================
+const B32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+function geohash(lat, lng, precision = 6) {
+  let idx = 0, bit = 0, even = true, hash = '';
+  let latMin = -90, latMax = 90, lngMin = -180, lngMax = 180;
+  while (hash.length < precision) {
+    if (even) {
+      const mid = (lngMin + lngMax) / 2;
+      if (lng >= mid) { idx = idx * 2 + 1; lngMin = mid; } else { idx = idx * 2; lngMax = mid; }
+    } else {
+      const mid = (latMin + latMax) / 2;
+      if (lat >= mid) { idx = idx * 2 + 1; latMin = mid; } else { idx = idx * 2; latMax = mid; }
+    }
+    even = !even;
+    if (++bit === 5) { hash += B32[idx]; bit = 0; idx = 0; }
+  }
+  return hash;
+}
+
+// ============================================================
+//  Peta
+// ============================================================
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  center: [state.center.lng, state.center.lat],
+  zoom: 12,
+  attributionControl: false,
+});
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
+
+// penanda lokasi pengguna
+const meEl = document.createElement('div');
+meEl.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#1f6feb;border:3px solid #fff;box-shadow:0 0 0 4px rgba(31,111,235,.25)';
+const meMarker = new maplibregl.Marker({ element: meEl }).setLngLat([state.center.lng, state.center.lat]).addTo(map);
+
+// ------------------------------------------------------------
+//  Lukis laporan
+// ------------------------------------------------------------
+function markerFor(report) {
+  const meta = TYPE_META[report.type] || { icon: '📍', color: '#3fb950' };
+  const el = document.createElement('div');
+  el.style.cssText = `width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+                      background:${meta.color};font-size:15px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.5);cursor:pointer`;
+  el.textContent = meta.icon;
+  el.title = `${report.type} · RM${report.severity ?? ''} · ${report.distanceM != null ? (report.distanceM/1000).toFixed(2)+' km' : ''}`;
+
+  const popup = new maplibregl.Popup({ offset: 18, closeButton: false }).setHTML(
+    `<div style="min-width:150px">
+       <b>${meta.icon} ${report.type}</b>
+       <div style="color:#8b949e;font-size:11px;margin:2px 0">
+         ${report.distanceM != null ? (report.distanceM/1000).toFixed(2) + ' km · ' : ''}
+         ✓${report.confirmCount} ✗${report.dismissCount}
+       </div>
+       ${report.note ? `<div style="font-size:11px;margin:4px 0">${report.note.replace(/</g,'&lt;')}</div>` : ''}
+       <div style="display:flex;gap:5px;margin-top:6px">
+         <button onclick="vote('${report.id}',1)" style="font-size:11px;padding:3px 8px">✓ Ada</button>
+         <button onclick="vote('${report.id}',0)" style="font-size:11px;padding:3px 8px">✗ Tiada</button>
+       </div>
+     </div>`,
+  );
+  return new maplibregl.Marker({ element: el }).setLngLat([report.lng, report.lat]).setPopup(popup);
+}
+
+function upsertMarker(report) {
+  const existing = state.markers.get(report.id);
+  if (existing) existing.remove();
+  state.markers.set(report.id, markerFor(report).addTo(map));
+}
+
+function removeMarker(id) {
+  const m = state.markers.get(id);
+  if (m) { m.remove(); state.markers.delete(id); }
+}
+
+window.vote = async (id, isConfirm) => {
+  try {
+    await api(`/api/v1/reports/${id}/${isConfirm ? 'confirm' : 'dismiss'}?cell=${geohash(state.center.lat, state.center.lng, 6)}`, { method: 'POST' });
+    log('ok', `${isConfirm ? '✓' : '✗'} ${id.slice(0, 8)}`);
+    await refresh();
+  } catch (e) { log('err', e.message); }
+};
+
+// ============================================================
+//  Ambil laporan
+// =============================================
+async function refresh() {
+  const { lat, lng } = state.center;
+  const radius = Math.max(500, map.getBounds().getEast() - map.getBounds().getWest()
+                                  ? estimateRadius() : 5000);
+  try {
+    const res = await api(`/api/v1/reports/nearby?lat=${lat}&lng=${lng}&radiusM=${Math.min(radius, 5000)}&limit=200`);
+    const reports = res.data;
+    $('s-count').textContent = reports.length;
+    const near = reports.filter((r) => (r.distanceM ?? 9e9) <= 5000).length;
+    $('s-near').textContent = near;
+    for (const r of reports) upsertMarker(r);
+    log('info', `muat ${reports.length} laporan`);
+  } catch (e) {
+    log('err', e.message);
+  }
+}
+
+function estimateRadius() {
+  // anggaran jarak dari pusat ke timur peti
+  const c = map.getCenter();
+  const e = map.getBounds().getEast();
+  const dLng = e - c.lng;
+  return Math.round(Math.abs(dLng) * 111_320 * Math.cos((c.lat * Math.PI) / 180));
+}
+
+// ============================================================
+//  WebSocket
+// ============================================================
+function wsUrl() {
+  const cell = geohash(state.center.lat, state.center.lng, 6);
+  const proto = API_BASE.startsWith('https') ? 'https' : 'http';
+  return `${proto}://${API_BASE.replace(/^https?:\/\//, '')}/api/v1/ws?cell=${cell}`;
+}
+
+function connectWs() {
+  if (state.ws && (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING)) return;
+  const url = wsUrl();
+  $('s-cell').textContent = geohash(state.center.lat, state.center.lng, 6);
+  try {
+    state.ws = new WebSocket(url);
+  } catch (e) { log('err', 'WS gagal: ' + e.message); return; }
+
+  state.ws.onopen = () => {
+    state.wsRetry = 0;
+    $('s-ws').textContent = 'tersambung';
+    log('ws', `sambung ke sel ${geohash(state.center.lat, state.center.lng, 6)}`);
+    state.ws.send(JSON.stringify({ kind: 'subscribe', cell: geohash(state.center.lat, state.center.lng, 6), lat: state.center.lat, lng: state.center.lng }));
+  };
+  state.ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.kind === 'report.new') {
+      log('ws', `laporan baharu ${msg.report?.type ?? ''}`);
+      upsertMarker(msg.report);
+      $('s-count').textContent = Number($('s-count').textContent) + 1;
+    } else if (msg.kind === 'report.confirm') {
+      log('ws', `✓ ${String(msg.id).slice(0,8)} → ${msg.confirmCount}`);
+    } else if (msg.kind === 'report.dismiss') {
+      log('ws', `✗ ${String(msg.id).slice(0,8)} → ${msg.dismissCount}`);
+    } else if (msg.kind === 'report.expire') {
+      removeMarker(msg.id);
+    } else if (msg.kind === 'presence') {
+      $('s-online').textContent = msg.online;
+    }
+  };
+  state.ws.onclose = () => {
+    $('s-ws').textContent = 'terputus';
+    log('ws', 'terputus — cuba semula…');
+    if (state.wsRetry < 6) {
+      state.wsRetry++;
+      setTimeout(connectWs, Math.min(15000, 1000 * 2 ** state.wsRetry));
+    }
+  };
+  state.ws.onerror = () => {};
+}
+
+// ============================================================
+//  Hantar laporan
+// ============================================================
+async function sendReport() {
+  const pos = meMarker.getLngLat();
+  try {
+    const res = await api('/api/v1/reports', {
+      method: 'POST',
+      body: JSON.stringify({ type: state.type, lat: pos.lat, lng: pos.lng, note: 'Dihantar dari peta' }),
+    });
+    log('ok', `${TYPE_META[state.type].icon} ${state.type} dihantar (${res.data.id.slice(0, 8)})`);
+    upsertMarker(res.data);
+    await refresh();
+  } catch (e) { log('err', e.message); }
+}
+
+// ============================================================
+//  Lokasi saya
+// ============================================================
+function locate() {
+  if (!navigator.geolocation) { log('err', 'geolocation tidak disokong'); return; }
+  log('info', 'minta lokasi…');
+  navigator.geolocation.getCurrentPosition(
+    (p) => {
+      const { latitude, longitude, accuracy, heading, speed } = p.coords;
+      state.center = { lat: latitude, lng: longitude };
+      meMarker.setLngLat([longitude, latitude]);
+      map.flyTo({ center: [longitude, latitude], zoom: 14 });
+      log('ok', `lokasi ${latitude.toFixed(5)}, ${longitude.toFixed(5)} ±${Math.round(accuracy ?? 0)}m`);
+      connectWs();
+      refresh();
+      // daftar kehadiran
+      api('/api/v1/reports/session', {
+        method: 'POST',
+        body: JSON.stringify({ lat: latitude, lng: longitude, heading, speedKmh: speed != null ? speed * 3.6 : null }),
+      }).catch(() => {});
+    },
+    (e) => log('err', 'lokasi gagal: ' + e.message),
+    { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 },
+  );
+}
+
+// ============================================================
+//  Routing
+// ============================================================
+async function route() {
+  const pos = meMarker.getLngLat();
+  const c = map.getCenter();
+  try {
+    const res = await api(`/api/v1/routing?lat1=${pos.lat}&lng1=${pos.lng}&lat2=${c.lat}&lng2=${c.lng}`);
+    const g = res.data.geometry;
+    if (state.routeLayer) { map.removeLayer('route'); map.removeSource('route'); }
+    map.addSource('route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: g } });
+    map.addLayer({
+      id: 'route', type: 'line', source: 'route',
+      paint: { 'line-color': '#1f6feb', 'line-width': 5, 'line-opacity': .85 },
+    });
+    state.routeLayer = true;
+    log('ok', `laluan ${(res.data.distanceM/1000).toFixed(1)} km · ${Math.round(res.data.durationS/60)} min · ${res.data.provider}`);
+  } catch (e) { log('err', 'routing: ' + e.message); }
+}
+
+// ============================================================
+//  Acara UI
+// ============================================================
+$('types').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-type]');
+  if (!b) return;
+  document.querySelectorAll('#types button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active');
+  state.type = b.dataset.type;
+});
+
+$('send').onclick = sendReport;
+$('locate').onclick = locate;
+$('toggle-ws').onclick = () => { if (state.ws) { state.ws.close(); } else connectWs(); };
+$('route').onclick = route;
+
+map.on('moveend', () => {
+  const c = map.getCenter();
+  state.center = { lat: c.lat, lng: c.lng };
+  $('s-cell').textContent = geohash(c.lat, c.lng, 6);
+  refresh();
+});
+
+// ============================================================
+//  Permulaan
+// ============================================================
+async function boot() {
+  try {
+    const h = await api('/healthz');
+    $('hint').innerHTML = `API: <b>${API_BASE}</b><br>peranti: <code>${DEVICE_ID.slice(0, 12)}…</code><br>tukar: <code>localStorage.setItem('lalin.api','https://…')</code>`;
+    log('ok', `API sihat — ${h.status}`);
+  } catch (e) {
+    $('hint').innerHTML = `⚠️ <b>API tidak dicapai</b> di ${API_BASE}<br>Jalankan <code>npm run dev</code> atau tukar:<br><code>localStorage.setItem('lalin.api','https://…')</code>`;
+    log('err', `API tidak dicapai: ${e.message}`);
+  }
+  refresh();
+  // WS disambung selepas lokasi diketahui (sel bergantung pada lokasi)
+}
+
+locate();
+setInterval(() => { if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({ kind: 'ping' })); }, 25000);
+</script>
+</body>
+</html>

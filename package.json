@@ -1,0 +1,26 @@
+{
+  "name": "lalintrafik",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Crowdsourced traffic, incident reports and real-time navigation — Cloudflare Workers + Hono + D1 + Durable Objects",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create lalintrafik",
+    "db:apply": "wrangler d1 execute lalintrafik --remote --file=db/schema.sql",
+    "db:apply:local": "wrangler d1 execute lalintrafik --local --file=db/schema.sql",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/schema.test.mjs test/geo.test.mjs test/data.test.mjs test/routing.test.mjs test/votes.test.mjs",
+    "test:e2e": "node test/_e2e_live.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240901.0",
+    "esbuild": "^0.17.19",
+    "typescript": "^5.6.0",
+    "wrangler": "^3.78.0"
+  }
+}

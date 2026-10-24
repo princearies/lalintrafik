@@ -1,0 +1,12 @@
+# Fail sandaran/timez sementara
+*.old
+
+# artifact binaan
+dist-bundle/
+dist-check/
+
+# Normalkan penghujung baris
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

@@ -1,0 +1,43 @@
+name = "lalintrafik"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ------------------------------------------------------------
+#  Peta sumber
+# ------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "lalintrafik"
+database_id = "ffbfab4a-b643-4b04-9274-b06e0402b7fc"
+migrations_dir = "db"
+
+# ------------------------------------------------------------
+#  Durable Objects — siaran masa nyata berasaskan sel geohash
+# ------------------------------------------------------------
+[[durable_objects.bindings]]
+name = "GRID"
+class_name = "GridDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GridDO"]
+
+# ------------------------------------------------------------
+#  Cron — tamatkan laporan lama, buang sesi mati
+# ------------------------------------------------------------
+[triggers]
+crons = ["*/5 * * * *"]
+
+# ------------------------------------------------------------
+#  Pembolehubah persekitaran
+# ------------------------------------------------------------
+[vars]
+# OSRM awam — tukar ke tumpangan sendiri bila trafik meningkat
+OSRM_BASE_URL = "https://router.project-osrm.org/route/v1/driving"
+MAX_RADIUS_M = "5000"
+MAX_LIMIT = "200"
+DEFAULT_LIMIT = "50"
+DEFAULT_TTL_MS = "3600000"
+MAX_PEERS_PER_CELL = "500"
+
