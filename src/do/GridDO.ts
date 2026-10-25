@@ -25,6 +25,9 @@ interface Peer {
   deviceId: string;
   lat: number;
   lng: number;
+  /** Profil — pilihan, dan hanya diumumkan dalam `presence`. */
+  displayName: string | null;
+  gender: string | null;
 }
 
 export class GridDO {
@@ -110,7 +113,15 @@ export class GridDO {
     // Peer belum wujud sehingga ia melanggan — cipta entri sementara.
     let peer = this.peers.get(ws);
     if (!peer) {
-      peer = { socket: ws, cell: '', deviceId: '', lat: 0, lng: 0 };
+      peer = {
+        socket: ws,
+        cell: '',
+        deviceId: '',
+        lat: 0,
+        lng: 0,
+        displayName: null,
+        gender: null,
+      };
       this.peers.set(ws, peer);
     }
 
@@ -119,7 +130,17 @@ export class GridDO {
         peer.cell = msg.cell;
         peer.lat = msg.lat;
         peer.lng = msg.lng;
-        this.trySend(ws, { kind: 'presence', online: this.state.getWebSockets().length });
+        // Profil boleh jadi undefined (klien lama) atau null (tidak dinyatakan).
+        peer.displayName = msg.displayName ?? null;
+        peer.gender = msg.gender ?? null;
+        // `presence` membawa profil penyerta supaya klien lain dapat
+        // mengumumkan "X menyertai" — bukan sekadar menolak bilangan.
+        this.trySend(ws, {
+          kind: 'presence',
+          online: this.state.getWebSockets().length,
+          displayName: peer.displayName,
+          gender: peer.gender,
+        });
         break;
       }
       case 'unsubscribe':

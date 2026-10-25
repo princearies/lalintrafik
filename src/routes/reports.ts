@@ -4,12 +4,14 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { REPORT_TYPES, type CreateReportRequest, type NearbyQuery } from '../types';
+import { REPORT_TYPES, GENDERS, type CreateReportRequest, type NearbyQuery } from '../types';
 import {
   clampInt,
   limits,
   optionalNumber,
   optionalString,
+  profileEnum,
+  profileString,
   requireEnum,
   requireLat,
   requireLng,
@@ -33,6 +35,7 @@ import {
 } from '../db/reports';
 import { publishReport, publishVote } from './ws';
 import { deviceIdOf, readJson } from '../middleware/cors';
+import { DISPLAY_NAME_MAX } from './profile';
 
 export const reports = new Hono<{ Bindings: Env }>();
 
@@ -56,6 +59,11 @@ reports.post('/', async (c) => {
     );
   }
 
+  // Profil dihantar bersama laporan supaya pelapor dikenali walaupun tidak
+  // pernah membuka tetapan profil. `undefined` = jangan ubah.
+  const displayName = profileString(body.displayName, 'displayName', DISPLAY_NAME_MAX);
+  const gender = profileEnum(body.gender, 'gender', GENDERS);
+
   const input: CreateReportRequest = {
     type,
     lat,
@@ -66,10 +74,12 @@ reports.post('/', async (c) => {
     roadName: optionalString(body.roadName, 'roadName', 120),
     note: optionalString(body.note, 'note', 280),
     severity: clampInt(body.severity, 'severity', 0, 3, 0),
+    displayName,
+    gender,
   };
 
   // pengguna hulung (tiada akaun) — dicipta/dikemas kini mengikut device_id
-  const user = await upsertUser(c.env.DB, deviceId);
+  const user = await upsertUser(c.env.DB, deviceId, { displayName, gender });
   const created = await createReport(
     c.env.DB,
     { ...input, userId: user.id, deviceId },
@@ -100,6 +110,24 @@ reports.get('/nearby', async (c) => {
   // Klien mudah alih selalunya hanya tahu lokasi kasar mereka.
   const lat = q.lat !== undefined ? requireLat(q.lat) : geo.lat;
   const lng = q.lng !== undefined ? requireLng(q.lng) : geo.lng;
+
+  // Profil OPSYENAL — hanya ditulis apabila dihantar. Ini penting: `refresh()`
+  // dipanggil pada setiap `moveend`, jadi menulis di sini tanpa syarat akan
+  // membakar kuota tulis D1 setiap kali peta digerakkan.
+  //
+  // `/nearby` tidak MENUNTUT header X-Device-Id, jadi header mesti disahkan
+  // sendiri sebelum dipakai — jangan pulangkan 422 untuk panggilan tanpa profil.
+  const profileDeviceId = c.req.header('X-Device-Id');
+  const displayName = profileString(q.displayName, 'displayName', DISPLAY_NAME_MAX);
+  const gender = profileEnum(q.gender, 'gender', GENDERS);
+  if (
+    profileDeviceId &&
+    profileDeviceId.length >= 8 &&
+    profileDeviceId.length <= 128 &&
+    (displayName !== undefined || gender !== undefined)
+  ) {
+    await upsertUser(c.env.DB, profileDeviceId, { displayName, gender });
+  }
 
   // Radius tidak pernah melebihi geofence — jangan benarkan klien
   // menarik laporan dari seluruh Sabah.

@@ -39,6 +39,7 @@ Untuk pembangunan tempatan, jalankan `npm run dev` dan set
 | Masa nyata | WebSocket ke Durable Object, siaran geofenced kepada 8 sel jiranan |
 | Navigasi | `GET /api/v1/routing` — OSRM dengan **smart cache D1** |
 | Hotspot | `GET /api/v1/hotspots` — agregasi kepadatan grid + lapisan kluster |
+| Profil pengguna | `GET/PATCH /api/v1/profile` — nama paparan + jantina, tanpa akaun |
 | Kepercayaan komuniti | `confirm` / `dismiss` → skor keyakinan 0–100 |
 | TTL automatik | laporan luput mengikut jenis; cron `*/5 * * * *` membersihkan |
 
@@ -176,6 +177,7 @@ mykira-map/
 │   │   └── cors.ts              ← CORS + errorHandler
 │   ├── routes/
 │   │   ├── reports.ts           ← laporan (cipta/nearby/confirm/dismiss)
+│   │   ├── profile.ts           ← nama paparan + jantina
 │   │   ├── routing.ts           ← OSRM + smart cache D1
 │   │   └── ws.ts                ← penghubung Worker ↔ Durable Object
 │   └── do/
@@ -184,6 +186,7 @@ mykira-map/
 │   └── index.html               ← app web (disajikan Worker pada `/`)
 ├── scripts/
 │   ├── build_frontend_ts.py     ← tukar index.html → src/frontendHtml.ts
+│   ├── migrate_profile_column.py← tambah lajur `gender` pada D1 sebenar
 │   ├── deploy_worker_rest.py    ← deploy melalui REST API
 │   ├── apply_schema_remote.py   ← guna schema.sql melalui REST
 │   └── migrate_route_cache.py   ← wujudkan semula route_cache
@@ -196,6 +199,7 @@ mykira-map/
 │   ├── geofence.test.mjs        ← geofence koridor
 │   ├── route_cache.test.mjs     ← smart cache (SQLite sebenar)
 │   ├── serve.test.mjs           ← `/` memulangkan HTML; URL relatif
+│   ├── profile.test.mjs         ← nama paparan + jantina (DDL sebenar)
 │   └── _e2e_live.mjs            ← WebSocket→DO (perlu server hidup)
 ├── ARCHITECTURE.md
 └── wrangler.toml
@@ -304,6 +308,51 @@ Laporan `DISMISSED` dan yang telah luput dikecualikan.
 > `ROUND(116.0505, 3)` = **116.050**, bukan 116.051. Dua laporan yang
 > berjarak 1 m tidak semestinya berada dalam sel yang sama. Ini kelakaran
 > SQLite, dan dikunci oleh ujian `test/hotspots.test.mjs` bahagian [7].
+
+### Profil
+
+```http
+GET  /api/v1/profile          → profil peranti ini, atau data:null
+PATCH /api/v1/profile         → kemas kini nama dan/atau jantina
+```
+
+Header `X-Device-Id` diperlukan. Tiada akaun, tiada log masuk — profil
+dipertanggungkanjawabkan kepada peranti.
+
+Semantik medan adalah sama di `POST /reports`, `PATCH /profile` dan
+parameter `?displayName=&gender=` pada `/nearby`:
+
+| Nilai | Maksud |
+|---|---|
+| medan tidak dihantar | **jangan ubah** |
+| `""` atau `null` | **kosongkan** |
+| string lain | set nilai itu |
+
+Kedua-duanya dibezakan kerana `""` ialah apa yang diterima parameter
+query (`?name=`) — tidak ada cara menghantar JSON `null` melalui URL.
+
+```jsonc
+// PATCH /api/v1/profile
+{ "displayName": "Wani", "gender": "FEMALE" }
+
+// → 200
+{ "success": true,
+  "data": { "id": "…", "deviceId": "dev-…", "displayName": "Wani",
+             "gender": "FEMALE", "createdAt": "…", "lastSeenAt": "…" } }
+```
+
+`gender` dibenarkan: `MALE`, `FEMALE`, `UNSPECIFIED` — ditegakkan oleh
+`CHECK` dalam `users`, jadi nilai haram tidak pernah masuk D1.
+
+**Nama lalai.** Jika pengguna tidak menetapkan nama, `defaultDisplayName()`
+ialah `DEVICE_ID` itu sendiri — jadi pelapor tetap dikenali walaupun tidak
+pernah membuka tetapan profil.
+
+**Profil dibawa secara automatik.** Laporan baharu, mesej `subscribe`
+WebSocket, dan carian `/nearby` semuanya membawa profil. Bagi `/nearby`
+profil hanya dihantar **apabila ia belum disegerakkan**, kerana `refresh()`
+dipanggil pada setiap `moveend` — menghantarnya setiap kali akan membakar
+kuota tulis D1 setiap kali peta digerakkan.
 
 ### Masa nyata
 

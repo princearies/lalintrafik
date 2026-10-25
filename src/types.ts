@@ -18,11 +18,16 @@ export type ReportType = (typeof REPORT_TYPES)[number];
 export const REPORT_STATUSES = ['ACTIVE', 'EXPIRED', 'DISMISSED'] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
+// ---------- Jantina (padan CHECK constraints dalam schema.sql) ----------
+export const GENDERS = ['MALE', 'FEMALE', 'UNSPECIFIED'] as const;
+export type Gender = (typeof GENDERS)[number];
+
 // ---------- Baris D1 (mentah) ----------
 export interface UserRow {
   id: string;
   device_id: string;
   display_name: string | null;
+  gender: string | null;
   created_at: number;
   last_seen_at: number;
 }
@@ -87,6 +92,7 @@ export interface User {
   id: string;
   deviceId: string;
   displayName: string | null;
+  gender: string | null;
   createdAt: string;
   lastSeenAt: string;
 }
@@ -104,6 +110,21 @@ export interface CreateReportRequest {
   severity?: number;
   /** Id sesi untuk siaran masa nyata. */
   sessionId?: string;
+  /**
+   * Profil penghantar — dihantar bersama laporan supaya pelapor dikenali
+   * walaupun mereka tidak pernah membuka tetapan profil.
+   *
+   * `null` = "kosongkan" (pengguna memilih tiada nama / tiada jantina),
+   * berbeza daripada tidak menghantar medan itu langsung.
+   */
+  displayName?: string | null;
+  gender?: Gender | null;
+}
+
+/** Perubahan profil — `undefined` = jangan ubah medan itu. */
+export interface ProfileUpdate {
+  displayName?: string | null;
+  gender?: Gender | null;
 }
 
 export interface NearbyQuery {
@@ -122,12 +143,25 @@ export type ServerMessage =
   | { kind: 'report.confirm'; id: string; confirmCount: number; confidence: number }
   | { kind: 'report.dismiss'; id: string; dismissCount: number; confidence: number }
   | { kind: 'report.expire'; id: string }
-  | { kind: 'presence'; online: number }
+  /**
+   * Kehadiran. `displayName`/`gender` adalah pilihan dan hanya hadir
+   * apabila peer yang menyertai menghantarnya — jadi mesej lama tanpa
+   * medan ini terus berfungsi.
+   */
+  | { kind: 'presence'; online: number; displayName?: string | null; gender?: string | null }
   | { kind: 'pong'; ts: number }
   | { kind: 'error'; message: string };
 
 export type ClientMessage =
-  | { kind: 'subscribe'; cell: string; lat: number; lng: number }
+  | {
+      kind: 'subscribe';
+      cell: string;
+      lat: number;
+      lng: number;
+      /** Profil penghantar — disimpan pada peer dan diumumkan dalam `presence`. */
+      displayName?: string | null;
+      gender?: string | null;
+    }
   | { kind: 'unsubscribe'; cell: string }
   | { kind: 'ping' }
   | { kind: 'report.confirm'; id: string }
@@ -190,6 +224,7 @@ export function toUser(r: UserRow): User {
     id: r.id,
     deviceId: r.device_id,
     displayName: r.display_name,
+    gender: r.gender,
     createdAt: msToIso(r.created_at),
     lastSeenAt: msToIso(r.last_seen_at),
   };

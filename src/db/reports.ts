@@ -251,10 +251,29 @@ export async function expireStaleReports(db: D1Database, limit = 500): Promise<n
 // ------------------------------------------------------------
 //  Pengguna (device_id hulung)
 // ------------------------------------------------------------
+/** Profil yang dihantar bersama laporan/carian — `undefined` = jangan ubah. */
+export interface UserProfile {
+  displayName?: string | null;
+  gender?: string | null;
+}
+
+/** Cari profil sedia ada mengikut device_id (hulung, tanpa akaun). */
+export async function getProfile(db: D1Database, deviceId: string): Promise<UserRow | null> {
+  return db.prepare('SELECT * FROM users WHERE device_id = ?').bind(deviceId).first<UserRow>();
+}
+
+/**
+ * Cipta atau kemas kini pengguna mengikut `device_id`.
+ *
+ * Hanya medan yang dihantar akan ditulis — laporan yang tidak membawa
+ * profil tidak memadamkan nama pengguna. Apabila profil dihantar, baris
+ * dibaca semula supaya nilai dipulangkan adalah nilai yang DISIMPAN, bukan
+ * tangkaan.
+ */
 export async function upsertUser(
   db: D1Database,
   deviceId: string,
-  displayName?: string | null,
+  profile?: UserProfile,
 ): Promise<UserRow> {
   const ts = nowMs();
   const existing = await db
@@ -262,7 +281,34 @@ export async function upsertUser(
     .bind(deviceId)
     .first<UserRow>();
 
+  const hasProfile =
+    profile?.displayName !== undefined || profile?.gender !== undefined;
+
   if (existing) {
+    if (hasProfile) {
+      const sets = ['last_seen_at = ?'];
+      const args: (string | number | null)[] = [ts];
+      if (profile?.displayName !== undefined) {
+        sets.push('display_name = ?');
+        args.push(profile.displayName ?? null);
+      }
+      if (profile?.gender !== undefined) {
+        sets.push('gender = ?');
+        args.push(profile.gender ?? null);
+      }
+      args.push(deviceId);
+      await db
+        .prepare(`UPDATE users SET ${sets.join(', ')} WHERE device_id = ?`)
+        .bind(...args)
+        .run();
+
+      const row = await db
+        .prepare('SELECT * FROM users WHERE device_id = ?')
+        .bind(deviceId)
+        .first<UserRow>();
+      return row ?? { ...existing, last_seen_at: ts };
+    }
+
     await db
       .prepare('UPDATE users SET last_seen_at = ? WHERE device_id = ?')
       .bind(ts, deviceId)
@@ -272,14 +318,17 @@ export async function upsertUser(
 
   const id = newId();
   await db
-    .prepare('INSERT INTO users (id, device_id, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, deviceId, displayName ?? null, ts, ts)
+    .prepare(
+      'INSERT INTO users (id, device_id, display_name, gender, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .bind(id, deviceId, profile?.displayName ?? null, profile?.gender ?? null, ts, ts)
     .run();
 
   return {
     id,
     device_id: deviceId,
-    display_name: displayName ?? null,
+    display_name: profile?.displayName ?? null,
+    gender: profile?.gender ?? null,
     created_at: ts,
     last_seen_at: ts,
   };

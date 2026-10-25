@@ -50,6 +50,31 @@
           padding: 8px 11px; font-size: 11px; color: #8b949e; max-width: 250px; }
 
   /* ------------------------------------------------------------
+     Profil pengguna — nama paparan + jantina
+     ------------------------------------------------------------ */
+  .profile {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid #21262d;
+  }
+  .profile .profile-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+  }
+  .profile label {
+    font-size: 11px; color: #8b949e; width: 84px; flex: none;
+  }
+  .profile input, .profile select {
+    flex: 1; min-width: 0;
+    background: #0d1117; color: #e6edf3;
+    border: 1px solid #30363d; border-radius: 8px;
+    padding: 8px 9px; font-size: 13px; font-family: inherit;
+  }
+  .profile input:focus, .profile select:focus {
+    outline: none; border-color: #1f6feb;
+  }
+  .profile-status { font-size: 11px; color: #3fb950; min-height: 14px; margin-top: 2px; }
+  .profile-status.err { color: #f85149; }
+
+  /* ------------------------------------------------------------
      Panel hotspot — senarai sel paling panas, disusun menurun.
      Setiap baris boleh diklik untuk terbang ke lokasi itu.
      ------------------------------------------------------------ */
@@ -170,6 +195,31 @@
   <div class="stat"><span>Online (sel ini)</span><b id="s-online">0</b></div>
   <div class="stat"><span>WebSocket</span><b id="s-ws">terputus</b></div>
   <div class="stat"><span>Sel geohash</span><b id="s-cell">—</b></div>
+
+  <hr style="border:none;border-top:1px solid #21262d;margin:10px 0" />
+
+  <!-- Profil pengguna — tanpa akaun, disimpan pada peranti dan D1.
+       Nama lalai ialah ID automatik sedia ada. -->
+  <div class="profile" id="profile">
+    <div class="profile-row">
+      <label for="profile-name">Nama Paparan</label>
+      <input id="profile-name" type="text" maxlength="60" autocomplete="off"
+             autocapitalize="words" spellcheck="false" />
+    </div>
+    <div class="profile-row">
+      <label for="profile-gender">Jantina</label>
+      <select id="profile-gender">
+        <option value="">— Tidak dinyatakan —</option>
+        <option value="MALE">Lelaki</option>
+        <option value="FEMALE">Perempuan</option>
+        <option value="UNSPECIFIED">Lain-lain</option>
+      </select>
+    </div>
+    <div class="row">
+      <button id="save-profile">💾 Simpan Profil</button>
+    </div>
+    <div class="profile-status" id="profile-status"></div>
+  </div>
 </div>
 
 <div class="hint" id="hint">
@@ -210,6 +260,64 @@ const DEVICE_ID = (() => {
   if (!id) { id = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('lalin.device', id); }
   return id;
 })();
+
+// ============================================================
+//  Profil pengguna — nama paparan + jantina
+// ============================================================
+// Tiada akaun: profil dipertanggungkanjawabkan kepada DEVICE_ID dan
+// disimpan dalam localStorage. Ia dihantar bersama laporan, mesej
+// WebSocket dan carian supaya pelapor dikenali di seluruh sistem —
+// termasuk oleh aplikasi Android yang akan datang.
+const PROFILE_NAME_KEY = 'lalin.username';
+const PROFILE_GENDER_KEY = 'lalin.gender';
+const DISPLAY_NAME_MAX = 60;
+
+/**
+ * Nama lalai — ID automatik sedia ada, supaya pengguna yang tidak
+ * menetapkan nama masih dapat dikenali oleh orang lain.
+ */
+function defaultDisplayName() { return DEVICE_ID; }
+
+/** `false` = profil telah berubah dan belum disegerakkan ke pelayan. */
+let profilePushed = true;
+
+/** Baca borang profil (nama telah dibuang ruangnya). */
+function currentProfile() {
+  return {
+    displayName: $('profile-name').value.trim().slice(0, DISPLAY_NAME_MAX),
+    gender: $('profile-gender').value,
+  };
+}
+
+/** Isi borang daripada localStorage, atau nilai lalai. */
+function loadProfileForm() {
+  const status = $('profile-status');
+  if (status) { status.textContent = ''; status.classList.remove('err'); }
+  $('profile-name').value = localStorage.getItem(PROFILE_NAME_KEY) ?? defaultDisplayName();
+  $('profile-gender').value = localStorage.getItem(PROFILE_GENDER_KEY) ?? '';
+}
+
+/**
+ * Simpan profil ke localStorage DAN pelayan.
+ *
+ * localStorage supaya app kekal konsisten walaupun offline; pelayan supaya
+ * profil terbawa bersama laporan dan mesej masa nyata.
+ */
+async function saveProfile() {
+  const status = $('profile-status');
+  const prof = currentProfile();
+  try {
+    await api('/api/v1/profile', { method: 'PATCH', body: JSON.stringify(prof) });
+    localStorage.setItem(PROFILE_NAME_KEY, prof.displayName);
+    localStorage.setItem(PROFILE_GENDER_KEY, prof.gender);
+    profilePushed = false;   // dorong pada carian seterusnya
+    if (status) { status.classList.remove('err'); status.textContent = '✓ Profil disimpan'; }
+    log('ok', `profil disimpan — ${prof.displayName || '(tiada nama)'}`);
+  } catch (e) {
+    if (status) { status.classList.add('err'); status.textContent = `Gagal: ${e.message}`; }
+    log('err', `profil gagal disimpan: ${e.message}`);
+  }
+}
 
 const TYPE_META = {
   ACCIDENT:    { icon: '🚨', color: '#f85149' },
@@ -619,7 +727,16 @@ async function refresh() {
   const span = map.getBounds().getEast() - map.getBounds().getWest();
   const radius = Math.max(500, span > 0 ? estimateRadius() : GEOFENCE_RADIUS_M);
   try {
-    const res = await api(`/api/v1/reports/nearby?lat=${lat}&lng=${lng}&radiusM=${Math.min(radius, GEOFENCE_RADIUS_M)}&limit=200`);
+    // Hantar profil HANYA apabila ia belum disegerakkan. `refresh()`
+    // dipanggil pada setiap `moveend`, jadi menghantarnya setiap kali akan
+    // menulis ke D1 setiap kali peta digerakkan.
+    let path = `/api/v1/reports/nearby?lat=${lat}&lng=${lng}&radiusM=${Math.min(radius, GEOFENCE_RADIUS_M)}&limit=200`;
+    if (!profilePushed) {
+      const prof = currentProfile();
+      path += `&displayName=${encodeURIComponent(prof.displayName)}&gender=${encodeURIComponent(prof.gender)}`;
+    }
+    const res = await api(path);
+    if (!profilePushed) profilePushed = true;
     const reports = res.data;
     $('s-count').textContent = reports.length;
     const near = reports.filter((r) => (r.distanceM ?? 9e9) <= 5000).length;
@@ -669,8 +786,19 @@ function connectWs() {
   state.ws.onopen = () => {
     state.wsRetry = 0;
     $('s-ws').textContent = 'tersambung';
-    log('ws', `sambung ke sel ${geohash(state.center.lat, state.center.lng, 6)}`);
-    state.ws.send(JSON.stringify({ kind: 'subscribe', cell: geohash(state.center.lat, state.center.lng, 6), lat: state.center.lat, lng: state.center.lng }));
+    const cell = geohash(state.center.lat, state.center.lng, 6);
+    log('ws', `sambung ke sel ${cell}`);
+    // Profil dibawa bersama langganan supaya sel/jiranan mengenali
+    // pengguna ini — bukan sekadar bilangan tanpa nama.
+    const prof = currentProfile();
+    state.ws.send(JSON.stringify({
+      kind: 'subscribe',
+      cell,
+      lat: state.center.lat,
+      lng: state.center.lng,
+      displayName: prof.displayName,
+      gender: prof.gender || null,
+    }));
   };
   state.ws.onmessage = (ev) => {
     let msg;
@@ -706,9 +834,19 @@ function connectWs() {
 async function sendReport() {
   const pos = meMarker.getLngLat();
   try {
+    // Profil dihantar bersama laporan supaya pelapor dikenali walaupun
+    // mereka tidak pernah menekan "Simpan Profil".
+    const prof = currentProfile();
     const res = await api('/api/v1/reports', {
       method: 'POST',
-      body: JSON.stringify({ type: state.type, lat: pos.lat, lng: pos.lng, note: 'Dihantar dari peta' }),
+      body: JSON.stringify({
+        type: state.type,
+        lat: pos.lat,
+        lng: pos.lng,
+        note: 'Dihantar dari peta',
+        displayName: prof.displayName,
+        gender: prof.gender || null,
+      }),
     });
     log('ok', `${TYPE_META[state.type].icon} ${state.type} dihantar (${res.data.id.slice(0, 8)})`);
     upsertMarker(res.data);
@@ -777,6 +915,7 @@ $('send').onclick = sendReport;
 $('locate').onclick = locate;
 $('toggle-ws').onclick = () => { if (state.ws) { state.ws.close(); } else connectWs(); };
 $('route').onclick = route;
+$('save-profile').onclick = saveProfile;
 
 // Togol hotspot ↔ penanda individu
 $('toggle-hotspot').onclick = () => { state.hotspotMode = true; applyViewMode(); };
@@ -829,6 +968,10 @@ map.on('moveend', () => {
  * (melalui `moveend`), bukan pemeriksaan kesihatan ini.
  */
 async function boot() {
+  // Isi borang dengan nilai tempatan dahulu supaya ia terus berguna,
+  // kemudian gantikan dengan salinan pelayar jika ada.
+  loadProfileForm();
+
   try {
     const h = await api('/healthz');
     $('hint').innerHTML = `API: <b>${ORIGIN}</b><br>peranti: <code>${DEVICE_ID.slice(0, 12)}…</code>`;
@@ -837,6 +980,20 @@ async function boot() {
     $('hint').innerHTML = `⚠️ <b>API tidak dicapai</b> di ${ORIGIN}<br>Pastikan Worker sudah dideploy, dan cuba muat semula laman ini.`;
     log('err', `API tidak dicapai: ${e.message}`);
   }
+
+  // Pulihkan profil dari pelayan — peranti baharu, atau selepas
+  // localStorage dikosongkan, masih mendapat nama yang sama.
+  try {
+    const res = await api('/api/v1/profile');
+    if (res.data) {
+      // Baris pengguna wujud — pelayan adalah salinan rasmi.
+      $('profile-name').value = res.data.displayName || defaultDisplayName();
+      $('profile-gender').value = res.data.gender || '';
+    }
+  } catch {
+    // tiada profil pelayan (peranti pertama kali) — kekal pada nilai tempatan
+  }
+
   refresh();
 }
 

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "frontend:ts": "python scripts/build_frontend_ts.py",
     "bundle": "npm run frontend:ts && wrangler deploy --dry-run --outdir=dist-bundle",
-    "test": "node --test test/schema.test.mjs test/geo.test.mjs test/data.test.mjs test/routing.test.mjs test/votes.test.mjs test/geofence.test.mjs test/route_cache.test.mjs test/hotspots.test.mjs test/serve.test.mjs",
+    "test": "node --test test/schema.test.mjs test/geo.test.mjs test/data.test.mjs test/routing.test.mjs test/votes.test.mjs test/geofence.test.mjs test/route_cache.test.mjs test/hotspots.test.mjs test/profile.test.mjs test/serve.test.mjs",
     "test:e2e": "node test/_e2e_live.mjs"
   },
   "dependencies": {

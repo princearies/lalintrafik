@@ -12,6 +12,7 @@ import { getRouteCached, USER_AGENT } from './routes/routing';
 import { requireLat, requireLng } from './lib/errors';
 import { MAP_CENTER, MAP_RADIUS_M } from './lib/geofence';
 import { FRONTEND_HTML } from './frontendHtml';
+import { profile } from './routes/profile';
 
 type AppEnv = {
   Bindings: Env;
@@ -56,6 +57,7 @@ app.get('/api/v1/info', (c) => {
 // ---------- API bersarang ----------
 app.route('/api/v1/reports', reports);
 app.route('/api/v1/hotspots', hotspots);
+app.route('/api/v1/profile', profile);
 
 // ---------- routing (OSRM) ----------
 app.get('/api/v1/routing', async (c) => {

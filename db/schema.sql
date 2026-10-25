@@ -13,11 +13,17 @@
 
 -- ------------------------------------------------------------
 -- 1) USERS — mesra tanpa-akaun (device_id hulung)
+--
+--  Profil adalah PILIHAN dan boleh diubah bila-bila masa melalui
+--  `PATCH /api/v1/profile`. `gender` boleh NULL (tidak dinyatakan);
+--  CHECK menghalang nilai di luar set yang dijana.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
   id           TEXT PRIMARY KEY,
   device_id    TEXT NOT NULL UNIQUE,          -- hulung dari localStorage client
-  display_name TEXT,
+  display_name TEXT,                          -- nama paparan (pilihan pengguna)
+  gender       TEXT                           -- pilihan pengguna
+                 CHECK (gender IN ('MALE','FEMALE','UNSPECIFIED')),
   created_at   INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL
 );

@@ -193,3 +193,46 @@ export function normalizeOptionalString(v: unknown, field: string, maxLen: numbe
   if (t.length > maxLen) throw new ValidationError(`'${field}' melebihi ${maxLen} aksara`);
   return t;
 }
+
+// ------------------------------------------------------------
+// Profil pengguna — `undefined` berbeza daripada `null`
+// ------------------------------------------------------------
+/**
+ * Teks profil.
+ *
+ * `undefined` = medan tidak dihantar → JANGAN ubah.
+ * `null`/`""`  = kosongkan (pengguna memilih "tiada nama").
+ * string lain = nilai baharu.
+ *
+ * `null` dan `""` dibezakan daripada "tiada perubahan" di dua sebab:
+ *  - `""` adalah apa yang diterima parameter QUERY (`?name=`) — tidak ada
+ *    cara untuk menghantar JSON `null` melalui URL.
+ *  - Jika `""` bermaksud "tiada perubahan", pengguna tidak akan pernah
+ *    boleh mengosongkan nama mereka.
+ */
+export function profileString(
+  v: unknown,
+  field: string,
+  maxLen: number,
+): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== 'string') throw new ValidationError(`'${field}' mestilah teks`);
+  const t = v.trim();
+  if (!t) return null;
+  if (t.length > maxLen) throw new ValidationError(`'${field}' melebihi ${maxLen} aksara`);
+  return t;
+}
+
+/** Enum profil dengan semantik yang sama (`undefined` = jangan ubah). */
+export function profileEnum<T extends string>(
+  v: unknown,
+  field: string,
+  allowed: readonly T[],
+): T | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== 'string') throw new ValidationError(`'${field}' mestilah teks`);
+  if (v === '') return null;
+  return requireEnum(v, field, allowed);
+}
