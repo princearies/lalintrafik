@@ -1,5 +1,5 @@
 // ============================================================
-//  LALINTRAFIK — titik masuk Worker
+//  MYKIRA MAP — titik masuk Worker
 //  Cloudflare Workers + Hono + D1 + Durable Objects
 // ============================================================
 
@@ -7,8 +7,9 @@ import { Hono } from 'hono';
 import type { Env } from './types';
 import { cors, errorHandler, timing } from './middleware/cors';
 import { reports } from './routes/reports';
-import { getRouteCached } from './routes/routing';
+import { getRouteCached, USER_AGENT } from './routes/routing';
 import { requireLat, requireLng } from './lib/errors';
+import { MAP_CENTER, MAP_RADIUS_M } from './lib/geofence';
 
 type AppEnv = {
   Bindings: Env;
@@ -28,10 +29,16 @@ app.use('*', timing());
 // ---------- siaran kesihatan ----------
 app.get('/', (c) => {
   return c.json({
-    name: 'Lalintrafik API',
+    name: 'Mykira Map',
     version: '1.0.0',
     status: 'ok',
+    description: 'Peta trafik komuniti — koridor Kota Kinabalu → Putatan → Papar → Kimanis → Membakut',
+    userAgent: USER_AGENT,
     realtime: 'websocket → Durable Object (GridDO)',
+    zone: {
+      center: MAP_CENTER,
+      radiusM: MAP_RADIUS_M,
+    },
   });
 });
 

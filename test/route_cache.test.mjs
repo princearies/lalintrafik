@@ -1,17 +1,22 @@
 // ============================================================
-//  Ujian cache laluan D1 — tingkah laku, bukan implementasi
+//  Ujian cache laluan D1 — skema KOORDINAT
 //
-//  Mengunci tiga jaminan:
-//   1. Panggilan pertama → OSRM dipanggil, keputusan disimpan ke D1.
-//   2. Panggilan kedua (koordinat sama) → OSRM TIDAK dipanggil lagi;
-//      data datang dari D1.
-//   3. A→B dan B→A berkongsi entri cache yang SAMA (kunci tidak
-//      bergantung arah) — ini hampir memergingkan kadar hit.
+//  Menggunakan `node:sqlite` sebenar dengan DDL sebenar daripada
+//  db/schema.sql, jadi ia menguji SQL sebenar termasuk strftime().
+//  Setiap senario mendapat pangkalan baru supaya tiada saling ganggu.
+//
+//  Mengunci:
+//   1. Miss → OSRM dipanggil, keputusan disimpan ke D1.
+//   2. Hit → OSRM TIDAK dipanggil lagi; data dari D1.
+//   3. A→B dan B→A berkongsi entri (laluan balik tidak panggil OSRM).
+//   4. Kunci dibundarkan 3 dp (~110 m) — titik berdekatan berkongsi.
 // ============================================================
 import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -20,14 +25,46 @@ const esbuild = path.join(root, 'node_modules/.bin/esbuild.cmd');
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log('  PASS', m); } else { fail++; console.log('  FAIL', m); } };
 
-console.log('\n[0] Transpile');
+console.log('\n[0] Transpile + skema sebenar');
 const out = path.join(here, '_route_cache.mjs');
 execFileSync('cmd', ['/c', esbuild,
   path.join(root, 'src/routes/routing.ts'), '--bundle', '--format=esm',
   '--platform=neutral', '--target=es2022', '--outfile=' + out,
 ], { stdio: 'pipe' });
-const { getRouteCached } = await import('file:///' + out.replace(/\\/g, '/'));
+const { getRouteCached, routeKeyRound, USER_AGENT } =
+  await import('file:///' + out.replace(/\\/g, '/'));
 console.log('  transpile routing.ts OK');
+
+const SCHEMA = fs.readFileSync(path.join(root, 'db', 'schema.sql'), 'utf8');
+
+/** Pangkalan baharu dengan skema sebenar — diasingkan untuk setiap senario. */
+function freshDb() {
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA);
+  return {
+    d1: {
+      prepare(sql) {
+        let bound = [];
+        return {
+          bind(...args) { bound = args; return this; },
+          async first() {
+            return db.prepare(sql).get(...bound) ?? null;
+          },
+          async run() {
+            const info = db.prepare(sql).run(...bound);
+            return { success: true, meta: { changes: Number(info.changes) } };
+          },
+        };
+      },
+    },
+    count: () => db.prepare('SELECT COUNT(*) AS n FROM route_cache').get().n,
+    rows: () => db.prepare('SELECT * FROM route_cache').all(),
+    expireAll: () => db.exec("UPDATE route_cache SET created_at = datetime('now', '-30 days')"),
+    ageAll: (sql) => db.exec(`UPDATE route_cache SET created_at = datetime('now', '${sql}')`),
+  };
+}
+
+const ctx = (env, db) => ({ env: { DB: db, ...env } });
 
 // ---------- pelayan OSRM mock yang mengira panggilan ----------
 function startOsrm() {
@@ -39,9 +76,9 @@ function startOsrm() {
       res.end(JSON.stringify({
         code: 'Ok',
         routes: [{
-          distance: 123_456,
-          duration: 7_890,
-          geometry: { type: 'LineString', coordinates: [[116.0735, 5.9804], [116.1000, 5.9167]] },
+          distance: 234_567,
+          duration: 8_123,
+          geometry: { type: 'LineString', coordinates: [[116.0505, 5.8943], [115.7300, 5.4500]] },
         }],
       }));
     });
@@ -55,140 +92,143 @@ function startOsrm() {
   });
 }
 
-// ---------- D1 mock dengan jadual route_cache ----------
-function makeD1() {
-  const rows = new Map();
-  return {
-    rows,
-    prepare(sql) {
-      let bound = [];
-      return {
-        bind(...args) { bound = args; return this; },
-        async first() {
-          if (/FROM route_cache/.test(sql)) {
-            const [key, now] = bound;
-            const r = rows.get(key);
-            return r && r.expires_at > now ? { payload: r.payload } : null;
-          }
-          return null;
-        },
-        async run() {
-          if (/INSERT INTO route_cache/.test(sql)) {
-            const [key, payload, expiresAt] = bound;
-            rows.set(key, { payload, expires_at: expiresAt });
-          }
-          return { success: true, meta: { changes: 1 } };
-        },
-      };
-    },
-  };
-}
+// ---------- laluan sebenar dalam koridor ----------
+const KK = { lat: 5.9804, lng: 116.0735 };          // Kota Kinabalu
+const MEMBAKUT = { lat: 5.4500, lng: 115.7300 };    // Kg Pimping, Membakut
+// 3 dp: 5.9804 → 5.98 ; 116.0735 → 116.074 ; 5.4500 → 5.45 ; 115.7300 → 115.73
+const KK_3DP = { lat: 5.98, lng: 116.074 };
+const MEMBAKUT_3DP = { lat: 5.45, lng: 115.73 };
 
-const ctx = (db, env = {}) => ({ env: { DB: db, ...env } });
-
-// ---------- laluan sebenar dalam zon KK ----------
-const A = { lat: 5.9804, lng: 116.0735 };   // pusat bandar KK
-const B = { lat: 5.8900, lng: 116.0500 };   // Putatan
-
-console.log('\n[1] Cache miss → panggil OSRM → simpan ke D1');
+console.log('\n[1] Miss → OSRM dipanggil → disimpan');
 {
+  const t = freshDb();
   const osrm = await startOsrm();
-  const db = makeD1();
-  const r1 = await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
+  const r1 = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
 
   ok(r1.cached === false, 'panggilan pertama: cached=false');
-  ok(osrm.calls() === 1, `OSRM dipanggil tepat 1 kali (sebenar: ${osrm.calls()})`);
-  ok(db.rows.size === 1, `1 entri disimpan ke D1 (sebenar: ${db.rows.size})`);
+  ok(r1.provider === 'osrm', `provider=osrm (sebenar: ${r1.provider})`);
+  ok(osrm.calls() === 1, `OSRM dipanggil 1 kali (sebenar: ${osrm.calls()})`);
+  ok(t.count() === 2, `2 baris disimpan — kedua-dua arah (sebenar: ${t.count()})`);
 
-  const entry = [...db.rows.values()][0];
-  const payload = JSON.parse(entry.payload);
-  ok(payload.distanceM === 123_456, `jarak dari OSRM disimpan (${payload.distanceM})`);
-  ok(payload.provider === 'osrm', 'provider=osrm disimpan');
-
-  const ttl = entry.expires_at - Date.now();
-  ok(ttl > 0 && ttl <= 24 * 3_600_000,
-    `TTL lalai 24 jam (sebenar: ${(ttl / 3_600_000).toFixed(1)} jam)`);
+  const rows = t.rows();
+  ok(rows.some((r) => r.origin_lat === KK_3DP.lat && r.origin_lng === KK_3DP.lng
+                 && r.dest_lat === MEMBAKUT_3DP.lat && r.dest_lng === MEMBAKUT_3DP.lng),
+    `baris A→B pada 3 dp (${KK_3DP.lat},${KK_3DP.lng} → ${MEMBAKUT_3DP.lat},${MEMBAKUT_3DP.lng})`);
+  ok(rows.some((r) => r.origin_lat === MEMBAKUT_3DP.lat && r.dest_lat === KK_3DP.lat),
+    'baris B→A juga disimpan (arah songsang)');
+  ok(rows.every((r) => r.distance === 234_567 && r.duration === 8_123),
+    'distance & duration disimpan');
+  ok(rows.every((r) => r.origin_lat === Math.round(r.origin_lat * 1000) / 1000),
+    'koordinat disimpan pada tepat 3 tempat perpuluhan');
+  ok(rows.every((r) => typeof r.route_data === 'string' && r.route_data.startsWith('{"type":"LineString"')),
+    'route_data menyimpan GeoJSON LineString mentah');
   await osrm.close();
 }
 
-console.log('\n[2] Cache hit → OSRM TIDAK dipanggil');
+console.log('\n[2] Hit → OSRM TIDAK dipanggil');
 {
+  const t = freshDb();
   const osrm = await startOsrm();
-  const db = makeD1();
 
-  await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
-  const r2 = await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
+  await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
+  ok(osrm.calls() === 1, 'persediaan: OSRM dipanggil sekali');
+  const r2 = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
 
   ok(r2.cached === true, 'panggilan kedua: cached=true');
-  ok(osrm.calls() === 1, `OSRM masih 1 panggilan sahaja (sebenar: ${osrm.calls()})`);
-  ok(r2.distanceM === 123_456, 'data dibaca balik dari D1 dengan betul');
+  ok(r2.provider === 'cache', `provider=cache (sebenar: ${r2.provider})`);
+  ok(osrm.calls() === 1, `OSRM TIDAK dipanggil (sebenar: ${osrm.calls()})`);
+  ok(r2.distanceM === 234_567 && r2.durationS === 8_123,
+    'jarak & masa dibaca balik dengan betul');
+  ok(r2.geometry.type === 'LineString' && r2.geometry.coordinates.length === 2,
+    'geometri GeoJSON dipulihkan sepenuhnya');
   await osrm.close();
 }
 
-console.log('\n[3] Kunci tidak bergantung ARAH (A→B = B→A)');
+console.log('\n[3] Arah songsang juga HIT');
 {
+  const t = freshDb();
   const osrm = await startOsrm();
-  const db = makeD1();
+  await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
 
-  await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
-  const r = await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [B, A]);
-
-  ok(r.cached === true, 'B→A dijawab dari cache tanpa panggil OSRM');
+  const r = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [MEMBAKUT, KK]);
+  ok(r.cached === true, 'B→A dijawab dari cache tanpa OSRM');
   ok(osrm.calls() === 1, `OSRM masih 1 panggilan sahaja (sebenar: ${osrm.calls()})`);
-  ok(db.rows.size === 1, `masih 1 entri cache (sebenar: ${db.rows.size})`);
   await osrm.close();
 }
 
-console.log('\n[4] Entri luput → panggil OSRM semula');
+console.log('\n[4] Kunci dibundarkan 3 dp (~110 m)');
 {
+  ok(routeKeyRound(5.89434) === 5.894, `5.89434 → ${routeKeyRound(5.89434)}`);
+  ok(routeKeyRound(5.89436) === 5.894, `5.89436 → ${routeKeyRound(5.89436)}`);
+  ok(routeKeyRound(116.05055) === 116.051, `116.05055 → ${routeKeyRound(116.05055)}`);
+  ok(routeKeyRound(5.9804) === 5.98, `5.9804 → ${routeKeyRound(5.9804)}`);
+
+  const t = freshDb();
   const osrm = await startOsrm();
-  const db = makeD1();
+  await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
 
-  await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
-  // paksa luput
-  for (const [k, v] of db.rows) db.rows.set(k, { ...v, expires_at: Date.now() - 1 });
+  const r = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [
+    { lat: 5.98042, lng: 116.07351 },   // ~2 m dari KK
+    { lat: 5.45001, lng: 115.73002 },   // ~1 m dari Membakut
+  ]);
+  ok(r.cached === true, 'titik ~2 m berbeza tetap HIT (toleransi ~110 m)');
+  ok(osrm.calls() === 1, `OSRM tidak dipanggil semula (sebenar: ${osrm.calls()})`);
+  await osrm.close();
+}
 
-  const r = await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
+console.log('\n[5] Entri luput → panggil OSRM semula');
+{
+  const t = freshDb();
+  const osrm = await startOsrm();
+  await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
+  t.expireAll();
+
+  const r = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
   ok(r.cached === false, 'entri luput → cached=false');
   ok(osrm.calls() === 2, `OSRM dipanggil semula (sebenar: ${osrm.calls()})`);
   await osrm.close();
 }
 
-console.log('\n[5] TTL boleh ditetapkan melalui Env');
+console.log('\n[6] TTL boleh ditetapkan melalui Env');
 {
+  const t = freshDb();
   const osrm = await startOsrm();
-  const db = makeD1();
-  const TTL_1H = 3_600_000;
+  const TTL_1JAM = 3_600_000;
+  await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url, ROUTE_CACHE_TTL_MS: String(TTL_1JAM) }, t.d1), [KK, MEMBAKUT]);
+  t.ageAll('-2 hours');
 
-  await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url, ROUTE_CACHE_TTL_MS: String(TTL_1H) }), [A, B]);
-  const ttl = [...db.rows.values()][0].expires_at - Date.now();
-  ok(Math.abs(ttl - TTL_1H) < 5_000, `TTL env 1 jam dipatuhi (sebenar: ${(ttl / 60_000).toFixed(1)} min)`);
+  const r = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url, ROUTE_CACHE_TTL_MS: String(TTL_1JAM) }, t.d1), [KK, MEMBAKUT]);
+  ok(r.cached === false, 'TTL 1 jam → entri 2 jam dianggap luput');
   await osrm.close();
 }
 
-console.log('\n[6] Entri rosak di D1 → jatuh balik ke OSRM (bukan crash)');
+console.log('\n[7] Laluan 3+ titik TIDAK diCache');
 {
+  const t = freshDb();
   const osrm = await startOsrm();
-  const db = makeD1();
+  const via = { lat: 5.7333, lng: 115.9333 };   // Papar
+  const r1 = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, via, MEMBAKUT]);
+  const r2 = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, via, MEMBAKUT]);
 
-  await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
-  for (const [k, v] of db.rows) db.rows.set(k, { ...v, payload: '{json rosak' });
-
-  const r = await getRouteCached(ctx(db, { OSRM_BASE_URL: osrm.url }), [A, B]);
-  ok(r.cached === false, 'JSON rosak → cached=false (jatuh balik ke OSRM)');
-  ok(osrm.calls() === 2, `OSRM dipanggil semula (sebenar: ${osrm.calls()})`);
-  ok(r.distanceM === 123_456, 'laluan baharu masih dipulangkan dengan betul');
+  ok(r1.cached === false && r2.cached === false, '3 titik → sentiasa cached=false');
+  ok(osrm.calls() === 2, `OSRM dipanggil setiap kali (sebenar: ${osrm.calls()})`);
+  ok(t.count() === 0, `tiada baris disimpan (sebenar: ${t.count()})`);
   await osrm.close();
 }
 
-console.log('\n[7] Tanpa D1 → terus ke OSRM (tiada cache)');
+console.log('\n[8] Tanpa D1 → terus ke OSRM');
 {
   const osrm = await startOsrm();
-  const r = await getRouteCached(ctx(null, { OSRM_BASE_URL: osrm.url }), [A, B]);
+  const r = await getRouteCached({ env: { OSRM_BASE_URL: osrm.url } }, [KK, MEMBAKUT]);
   ok(r.cached === false, 'tiada D1 → cached=false');
   ok(osrm.calls() === 1, 'OSRM dipanggil terus');
   await osrm.close();
 }
+
+console.log('\n[9] Identiti projek');
+ok(USER_AGENT.startsWith('MykiraMap-Worker-Putatan/'),
+  `User-Agent: "${USER_AGENT}"`);
+ok(!/lalintrafik/i.test(USER_AGENT), 'User-Agent tidak mengandungi nama lama');
 
 console.log(`\n${pass} PASS, ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

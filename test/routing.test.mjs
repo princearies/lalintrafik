@@ -73,7 +73,7 @@ console.log('\n[1] User-Agent');
 
   ok(seen.length === 1, `pelayan menerima 1 panggilan (sebenar: ${seen.length})`);
   ok(seen[0].ua.length > 0, `User-Agent dihantar (sebenar: "${seen[0].ua}")`);
-  ok(/lalintrafik/.test(seen[0].ua), `User-Agent mengenal pasti aplikasi: "${seen[0].ua}"`);
+  ok(/MykiraMap/.test(seen[0].ua), `User-Agent mengenal pasti aplikasi: "${seen[0].ua}"`);
   ok(seen[0].accept.includes('application/json'), 'Accept: application/json dihantar');
   ok(r.distanceM === 1235, `distanceM dibundarkan (sebenar: ${r.distanceM})`);
   ok(r.durationS === 678, `durationS dibundarkan (sebenar: ${r.durationS})`);

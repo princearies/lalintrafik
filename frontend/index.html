@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Lalintrafik — Peta Komuniti</title>
+<title>Mykira Map — Peta Komuniti Sabah</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <style>
@@ -54,8 +54,8 @@
 <div id="map"></div>
 
 <div class="panel">
-  <h1>Lalintrafik</h1>
-  <p>Laporan komuniti masa nyata</p>
+  <h1>Mykira Map</h1>
+  <p>Koridor KK → Putatan → Papar → Kimanis → Membakut</p>
 
   <div class="row" id="types">
     <button data-type="ACCIDENT"    class="active">🚨 Kemalangan</button>
@@ -115,9 +115,11 @@ const TYPE_META = {
 
 const state = {
   type: 'ACCIDENT',
-  // Zon operasi: Kota Kinabalu, Sabah (Sepanggar, Inanam, Donggongon,
-  // Penampang, Putatan, KKIA — semua dalam 25 km dari titik ini).
-  center: { lat: 5.9804, lng: 116.0735 },
+  // Zon operasi: koridor selatan Sabah. Pusat di Putatan supaya
+  // KK dan Membakut berada pada jarak yang hampir sama.
+  // (Sepanggar, Inanam, Donggongon, Penampang, Putatan, KKIA, Petagas,
+  //  Lok Kawi, Papar, Kimanis dan Kg Pimping semuanya dalam 90 km.)
+  center: { lat: 5.8943, lng: 116.0505 },
   ws: null,
   markers: new Map(),
   routeLayer: null,
@@ -125,7 +127,7 @@ const state = {
 };
 
 /** Had geofence zon operasi (meter) — mesti sepadan dengan pelayan. */
-const GEOFENCE_RADIUS_M = 25000;
+const GEOFENCE_RADIUS_M = 90000;
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
@@ -177,7 +179,8 @@ const map = new maplibregl.Map({
   container: 'map',
   style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
   center: [state.center.lng, state.center.lat],
-  zoom: 12,
+  // z10 memaparkan keseluruhan koridor KK–Membakut (~160 km) sekali lihat.
+  zoom: 10,
   attributionControl: false,
 });
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));

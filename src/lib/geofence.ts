@@ -1,26 +1,32 @@
 // ============================================================
-//  Geofence Kota Kinabalu (KK), Sabah
+//  Geofence Mykira Map — koridor selatan Sabah
 //
-//  Lalintrafik hanya menerima laporan dari dalam zon operasi KK.
+//  Aplikasi hanya menerima laporan dari dalam koridor operasi:
+//    Kota Kinabalu → Putatan → Papar → Kimanis → Membakut
+//
 //  Titik tengah dan radius boleh ditukar melalui pembolehubah
 //  persekitaran — tiada perubahan kod diperlukan.
-//
-//  Zon 25 km daripada pusat KK meliputi:
-//    Sepanggar, Inanam, Donggongon, Penampang, Putatan, KKIA
 // ============================================================
 
 import type { Env } from '../types';
 import { haversineM } from './geo';
 
-/** Titik tengah Kota Kinabalu (lembah KK / pusat bandar). */
-export const KK_CENTER = { lat: 5.9804, lng: 116.0735 } as const;
+/**
+ * Titik tengah zon operasi — Putatan, Sabah.
+ * Dipilih kerana ia terletak di pertengahan koridor KK ↔ Membakut.
+ */
+export const MAP_CENTER = { lat: 5.8943, lng: 116.0505 } as const;
 
 /**
- * Had geofence lalai — 25 km.
- * Julat yang diminta ialah 20–30 km; 25 km ialah titik tengah dan
- * meliputi semua zon senarai di atas dengan margin yang selesa.
+ * Had geofence lalai — 90 km.
+ * Julat yang diminta ialah 80–100 km; 90 km ialah titik tengah.
+ *
+ * Dari Putatan, 90 km meliputi:
+ *   KK & KKIA (~10 km), Petagas (~3 km), Lok Kawi (~5 km),
+ *   Papar (~22 km), Kimanis (~44 km), Membakut / Kg Pimping (~62 km)
+ * dengan margin yang selesa ke hujung koridor.
  */
-export const KK_RADIUS_M = 25_000;
+export const MAP_RADIUS_M = 90_000;
 
 export interface Geofence {
   lat: number;
@@ -47,14 +53,14 @@ function toFinite(raw: string | undefined, fallback: number): number {
 }
 
 export function geofenceOf(env?: Env): Geofence {
-  const lat = toFinite(env?.CENTER_LAT, KK_CENTER.lat);
-  const lng = toFinite(env?.CENTER_LNG, KK_CENTER.lng);
-  const radiusM = toFinite(env?.GEOFENCE_RADIUS_M, KK_RADIUS_M);
+  const lat = toFinite(env?.CENTER_LAT, MAP_CENTER.lat);
+  const lng = toFinite(env?.CENTER_LNG, MAP_CENTER.lng);
+  const radiusM = toFinite(env?.GEOFENCE_RADIUS_M, MAP_RADIUS_M);
 
   return {
     lat,
     lng,
-    radiusM: radiusM > 0 ? radiusM : KK_RADIUS_M,
+    radiusM: radiusM > 0 ? radiusM : MAP_RADIUS_M,
   };
 }
 
@@ -82,7 +88,7 @@ export function geofenceMessage(lat: number, lng: number, env?: Env): string {
   const g = geofenceOf(env);
   const km = (distanceFromCenterM(lat, lng, env) / 1000).toFixed(1);
   return (
-    `Laporan di luar zon operasi — ${km} km dari pusat Kota Kinabalu ` +
+    `Laporan di luar zon operasi — ${km} km dari Putatan ` +
     `(had ${(g.radiusM / 1000).toFixed(0)} km)`
   );
 }

@@ -31,17 +31,17 @@ metadata = {
             "name": "OSRM_BASE_URL",
             "text": "https://router.project-osrm.org/route/v1/driving",
         },
-        {"type": "plain_text", "name": "MAX_RADIUS_M", "text": "25000"},
+        {"type": "plain_text", "name": "MAX_RADIUS_M", "text": "90000"},
         {"type": "plain_text", "name": "MAX_LIMIT", "text": "200"},
         {"type": "plain_text", "name": "DEFAULT_LIMIT", "text": "50"},
         {"type": "plain_text", "name": "DEFAULT_TTL_MS", "text": "3600000"},
         {"type": "plain_text", "name": "MAX_PEERS_PER_CELL", "text": "500"},
-        # Zon operasi — Kota Kinabalu, Sabah
-        {"type": "plain_text", "name": "CENTER_LAT", "text": "5.9804"},
-        {"type": "plain_text", "name": "CENTER_LNG", "text": "116.0735"},
-        {"type": "plain_text", "name": "GEOFENCE_RADIUS_M", "text": "25000"},
-        # Cache laluan D1 — 24 jam
-        {"type": "plain_text", "name": "ROUTE_CACHE_TTL_MS", "text": "86400000"},
+        # Zon operasi — koridor selatan Sabah (pusat di Putatan)
+        {"type": "plain_text", "name": "CENTER_LAT", "text": "5.8943"},
+        {"type": "plain_text", "name": "CENTER_LNG", "text": "116.0505"},
+        {"type": "plain_text", "name": "GEOFENCE_RADIUS_M", "text": "90000"},
+        # Cache laluan D1 — 7 hari
+        {"type": "plain_text", "name": "ROUTE_CACHE_TTL_MS", "text": "604800000"},
     ],
     "triggers": {"crons": ["*/5 * * * *"]},
     "observability": {"enabled": True},

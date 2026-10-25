@@ -1,5 +1,6 @@
 -- ============================================================
---  LALINTRAFIK — Skema D1 (Crowdsourced traffic & incident reports)
+--  MYKIRA MAP — Skema D1 (Crowdsourced traffic & incident reports)
+--  Zon operasi: koridor Kota Kinabalu → Putatan → Papar → Kimanis → Membakut
 --  Target: Cloudflare D1 (SQLite Edge)
 --
 --  Rekaan ruang: `geohash` (precision 8) dijana di Worker.
@@ -104,13 +105,37 @@ CREATE INDEX IF NOT EXISTS idx_users_device
   ON users (device_id);
 
 -- ------------------------------------------------------------
--- 4) ROUTE_CACHE — cache routing OSRM (elak panggilan berulang)
+-- 4) ROUTE_CACHE — cache routing OSRM
+--
+--  Kunci carian ialah 4 koordinat yang dibundarkan kepada 3 tempat
+--  perpuluhan (~110 m) di Worker, supaya laluan berdekatan dalam
+--  koridor yang sama berkongsi entri.
+--
+--  `route_data` menyimpan geometri GeoJSON penuh — termasuk polyline
+--  Lebuhraya Pan Borneo untuk laluan jarak jauh KK→Membakut yang
+--  boleh mencecah ratusan ribu titik. Disimpan sebagai satu benang
+--  GeoJSON, bukan dikodkan, supaya klien Android terus memakannya.
+--
+--  Indeks komposit adalah TERKUNCI (UNIQUE) atas 4 koordinat: ia
+--  melindungi carian koordinat dengan pantas DAN menghalang baris
+--  pendua apabila laluan yang sama diminta serentak.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS route_cache (
-  key        TEXT PRIMARY KEY,
-  payload    TEXT NOT NULL,
-  expires_at INTEGER NOT NULL
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  origin_lat  REAL NOT NULL,                  -- dibundarkan 3 dp
+  origin_lng  REAL NOT NULL,
+  dest_lat    REAL NOT NULL,
+  dest_lng    REAL NOT NULL,
+  route_data  TEXT NOT NULL,                  -- GeoJSON LineString penuh
+  distance    REAL,                           -- meter
+  duration    REAL,                           -- saat
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_route_cache_expires
-  ON route_cache (expires_at);
+-- carian julat koordinat pantas (cache hit < 10 ms)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_route_coords
+  ON route_cache (origin_lat, origin_lng, dest_lat, dest_lng);
+
+-- pembersihan entri luput
+CREATE INDEX IF NOT EXISTS idx_route_cache_created
+  ON route_cache (created_at);

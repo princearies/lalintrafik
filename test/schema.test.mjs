@@ -41,9 +41,37 @@ const expectIdx = [
   'idx_reports_geohash',
   'idx_sessions_cell',
   'idx_users_device',
-  'idx_route_cache_expires',
+  'idx_route_coords',
+  'idx_route_cache_created',
 ];
 for (const i of expectIdx) ok(idx.includes(i), `index ${i}`);
+
+console.log('\n[2b] route_cache — skema koordinat');
+{
+  const rcCols = db.prepare('PRAGMA table_info(route_cache)').all().map((c) => c.name);
+  for (const c of ['id', 'origin_lat', 'origin_lng', 'dest_lat', 'dest_lng',
+                   'route_data', 'distance', 'duration', 'created_at']) {
+    ok(rcCols.includes(c), `kolom route_cache.${c}`);
+  }
+
+  const uniqSql = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE name = 'idx_route_coords'",
+  ).get();
+  ok(/UNIQUE/i.test(uniqSql?.sql ?? ''), 'idx_route_coords adalah UNIQUE');
+
+  // indeks UNIQUE mesti benar-benar menghalang baris pendupa
+  let dup = false;
+  try {
+    const ins = db.prepare(
+      `INSERT INTO route_cache
+         (origin_lat, origin_lng, dest_lat, dest_lng, route_data)
+       VALUES (?, ?, ?, ?, '[]')`,
+    );
+    ins.run(5.894, 116.05, 5.45, 115.73);
+    ins.run(5.894, 116.05, 5.45, 115.73);
+  } catch { dup = true; }
+  ok(dup, 'baris pendupa ditolak oleh indeks UNIQUE');
+}
 
 console.log('\n[3] CHECK constraints menolak nilai haram');
 let rejected = false;

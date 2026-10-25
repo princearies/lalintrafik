@@ -1,8 +1,10 @@
-# LALINTRAFIK 🗺️
+# MYKIRA MAP 🗺️
 
 Aplikasi web komuniti untuk laporan trafik, navigasi dan insiden — ala Waze, tetapi ringan dan dihoskan sepenuhnya di Cloudflare Edge.
 
 **Stack:** Cloudflare Workers · Hono.js (TypeScript) · D1 (SQLite) · Durable Objects · MapLibre GL JS · OSRM
+
+**Siap untuk Android** — API REST dan WebSocket adalah tulen, tiada kekangenan framework frontend.
 
 ---
 
@@ -13,109 +15,155 @@ Aplikasi web komuniti untuk laporan trafik, navigasi dan insiden — ala Waze, t
 | Laporan insiden | `POST /api/v1/reports` — kemalangan, perangkap, bahaya, sesak, polis, tutup jalan |
 | Kuari berdekatan | `GET /api/v1/reports/nearby` — peti bounding + Haversine, di bawah 5ms |
 | Masa nyata | WebSocket ke Durable Object, siaran geofenced kepada 8 sel jiranan |
-| Navigasi | `GET /api/v1/routing` — OSRM dengan cache D1 |
+| Navigasi | `GET /api/v1/routing` — OSRM dengan **smart cache D1** |
 | Kepercayaan komuniti | `confirm` / `dismiss` → skor keyakinan 0–100 |
 | TTL automatik | laporan luput mengikut jenis; cron `*/5 * * * *` membersihkan |
 
 ---
 
-## Zon Operasi — Kota Kinabalu, Sabah
+## Zon Operasi — Koridor Selatan Sabah
 
-Aplikasi ini **berlesen untuk wilayah Kota Kinabalu sahaja**. Semua laporan
-ditapis oleh geofence sebelum menyentuh D1.
+Aplikasi ini **berlesen untuk satu koridor sahaja**:
+
+```
+Kota Kinabalu → Putatan → Papar → Kimanis → Membakut (Kg Pimping)
+```
+
+Semua laporan ditapis oleh geofence **sebelum** menyentuh D1.
 
 | Tetapan | Nilai |
 |---|---|
-| Titik tengah | `5.9804, 116.0735` (lembah KK) |
-| Had radius | **25 km** |
-| Zon dilindungi | Pusat bandar KK, Sepanggar, Inanam, Donggongon, Penampang, Putatan, KKIA |
+| Titik tengah | `5.8943, 116.0505` — **Putatan, Sabah** |
+| Had radius | **90 km** (julat diminta 80–100 km) |
+| Jarak dari pusat | KK 10 · KKIA 5 · Petagas 3 · Lok Kawi 5 · Papar 22 · Kimanis 44 · Membakut 62 km |
 
 ```
-POST /api/v1/reports   dengan lat/lng di luar 25 km  →  422
-{"success":false,"error":"Laporan di luar zon operasi — 1625.5 km dari pusat Kota Kinabalu (had 25 km)"}
+POST /api/v1/reports   dengan lat/lng di luar 90 km  →  422
+{"success":false,"error":"Laporan di luar zon operasi — 1621.2 km dari Putatan (had 90 km)"}
 ```
 
-Tiga sifat penting geofence ini:
+Empat sifat penting:
 
 1. **Dipaksa sebelum D1** — laporan luar zon tidak pernah masuk pangkalan data.
-2. **`/nearby` tanpa koordinat** jatuh balik ke pusat KK dan menaikkan radiusnya
-   kepada 25 km, jadi klien mudah alih tidak perlu tahu lokasi tepat.
-3. **Radius `/nearby` tidak pernah melebihi geofence** — klien tidak boleh menarik
-   laporan dari seluruh Sabah.
+2. **`/nearby` tanpa koordinat** jatuh balik ke Putatan dengan radius 90 km.
+3. **Radius `/nearby` tidak pernah melebihi geofence** — klien tidak boleh menarik laporan dari seluruh Sabah.
+4. **Titik tengah di Putatan, bukan KK** — supaya KK (utara) dan Membakut (selatan) berada pada jarak yang hampir sama di dalam bulatan geofence.
 
-Semua tetapan boleh ditukar tanpa mengubah kod, melalui pembolehubah persekitaran:
+Semua tetapan boleh ditukar tanpa mengubah kod:
 
 ```toml
-CENTER_LAT          = "5.9804"
-CENTER_LNG          = "116.0735"
-GEOFENCE_RADIUS_M   = "25000"     # 20,000–30,000 sesuai untuk zon ini
+CENTER_LAT          = "5.8943"
+CENTER_LNG          = "116.0505"
+GEOFENCE_RADIUS_M   = "90000"
 ```
 
-Nilai env yang rosak (kosong, bukan nombor, negatif) **jatuh balik kepada lalai**,
-bukan mematikan geofence. Ini penting kerana `Number('')` ialah `0`, bukan `NaN` —
-tanpa semakan rentetan kosong, satu pembolehubah kosong akan mengalih geofence
-ke 0°E tanpa sebarang ralat.
+Nilai env yang rosak (kosong, bukan nombor, negatif) **jatuh balik kepada lalai**, bukan mematikan geofence. Ini penting kerana `Number('')` ialah `0`, bukan `NaN` — tanpa semakan rentetan kosong, satu pembolehubah kosong akan mengalih geofence ke 0°E tanpa sebarang ralat.
 
-## Cache Laluan (D1)
+---
+
+## Smart Cache Laluan (D1)
 
 Routing ialah panggilan keluar yang paling mahal, jadi ia disimpan dalam D1.
 
 ```
 permintaan laluan
       │
-      ├─ kunci kanonik ──→ D1?  ──ada & belum luput──→  balas (< 10 ms, tiada OSRM)
-      │                        │
-      │                        └─tiada/luput─┐
-      │                                      ↓
-      └──────────────────────────→  OSRM  →  simpan ke D1 (24 jam)
+      ├─ bundar koordinat kepada 3 dp (~110 m)
+      │
+      ├─ D1?  ──ada & belum luput──→  balas (< 10 ms, tiada OSRM)
+      │        │
+      │        └─tiada/luput─┐
+      │                      ↓
+      └──────────────────→  OSRM  →  simpan ke D1 (7 hari) → balas
 ```
 
-- **Kunci kanonik dan tidak bergantung arah** — A→B dan B→A berkongsi entri
-  yang sama, hampir memergingkan kadar hit cache.
-- **Rentetan koordinat terus, bukan hash** — dua laluan berbeza tidak mungkin
-  berkongsi kunci. Cache yang salah lebih buruk daripada cache yang miss.
-- **TTL 24 jam** (`ROUTE_CACHE_TTL_MS`) — geometri jalan berubah sangat lambat.
+### Skema
 
-> **Warisan penting:** tulisan cache **mesti** didaftarkan dengan
-> `ctx.waitUntil()`. Menggunakan `void promise` kelihatan bersih tetapi
-> runtime boleh membatalkan tulisan begitu balasan dihantar — dan ia gagal
-> **senyap**. Gejala fosilnya: hanya 5 baris muncul daripada 32 panggilan,
-> tanpa sebarang mesej ralat.
+```sql
+CREATE TABLE route_cache (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  origin_lat  REAL NOT NULL,      -- dibundarkan 3 dp
+  origin_lng  REAL NOT NULL,
+  dest_lat    REAL NOT NULL,
+  dest_lng    REAL NOT NULL,
+  route_data  TEXT NOT NULL,      -- GeoJSON LineString mentah
+  distance    REAL,               -- meter
+  duration    REAL,               -- saat
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_route_coords
+  ON route_cache (origin_lat, origin_lng, dest_lat, dest_lng);
+```
+
+### Tiga keputusan rekaan
+
+**Kunci dibundarkan kepada 3 tempat perpuluhan (~110 m).** Sengaja kasar:
+laluan yang titik mulanya berbeza ~100 m berkongsi entri yang sama. Untuk
+trafik araya (bukan navigasi pintu-ke-pintu) perbezaan itu tidak ketara,
+dan kadar hit cache meningkat dengan ketara.
+
+**A→B dan B→A berkongsi entri.** Laluan disimpan dalam **kedua-dua** susunan,
+jadi bacaan sentiasa satu pertanyaanan dan laluan balik dari Membakut ke KK
+tidak pernah memanggil OSRM. Kosnya dua baris untuk satu laluan — berbaloi.
+
+**Indeks koordinat adalah UNIQUE**, bukan sekadar indeks biasa. Ia melindungi
+carian koordinat *dan* menghalang baris pendupa apabila laluan yang sama
+diminta serentak oleh berbilang peranti.
+
+### Dua perangkap yang nyata
+
+**Tulisan cache mesti didaftarkan dengan `ctx.waitUntil()`.** Menggunakan
+`void promise` kelihatan bersih tetapi runtime boleh membatalkan tulisan
+begitu balasan dihantar — dan ia gagal **senyap**. Gejala fosilnya: hanya
+5 baris muncul daripada 32 panggilan, tanpa sebarang mesej ralat.
+
+**Hanya laluan 2 titik diCache.** Dua laluan yang berbeza perantaraan akan
+berkongsi kunci dan yang kedua menerima geometri yang **SALAH**. Cache yang
+salah lebih buruk daripada cache miss, jadi laluan 3+ titik diteruskan terus
+ke OSRM.
 
 ---
 
 ## Struktur Projek
 
 ```
-lalintrafik/
+mykira-map/
 ├── db/
-│   └── schema.sql            ← 4 jadual + 8 index + CHECK constraints
+│   └── schema.sql               ← 4 jadual (users, reports, live_sessions, route_cache)
 ├── src/
-│   ├── index.ts              ← titik masuk Worker (Hono)
-│   ├── types.ts              ← jenis & Env
+│   ├── index.ts                 ← titik masuk Hono
+│   ├── types.ts                 ← jenis + Env
 │   ├── lib/
-│   │   ├── geo.ts            ← geohash, haversine, peti bounding
-│   │   └── errors.ts         ← ValidationError, AppError, pengesah
-│   ├── middleware/
-│   │   └── cors.ts           ← CORS + pengendali ralat berpusat
+│   │   ├── errors.ts            ← ValidationError, AppError, pangkuh input
+│   │   ├── geo.ts               ← geohash, Haversine, peti bounding
+│   │   └── geofence.ts          ← geofence koridor Sabah
 │   ├── db/
-│   │   └── reports.ts        ← lapisan data D1
+│   │   └── reports.ts           ← lapisan akses D1
+│   ├── middleware/
+│   │   └── cors.ts              ← CORS + errorHandler
 │   ├── routes/
-│   │   ├── reports.ts        ← laporan + nearby + undian
-│   │   ├── routing.ts        ← OSRM + cache
-│   │   └── ws.ts             ← penghubung Worker ↔ Durable Object
+│   │   ├── reports.ts           ← laporan (cipta/nearby/confirm/dismiss)
+│   │   ├── routing.ts           ← OSRM + smart cache D1
+│   │   └── ws.ts                ← penghubung Worker ↔ Durable Object
 │   └── do/
-│       └── GridDO.ts         ← Durable Object siaran
+│       └── GridDO.ts            ← Durable Object siaran
 ├── frontend/
-│   └── index.html            ← demo MapLibre (buka terus di pelayar)
+│   └── index.html               ← demo MapLibre (buka terus di pelayar)
+├── scripts/
+│   ├── deploy_worker_rest.py    ← deploy melalui REST API
+│   ├── apply_schema_remote.py   ← guna schema.sql melalui REST
+│   └── migrate_route_cache.py   ← wujudkan semula route_cache
 ├── test/
-│   ├── schema.test.mjs       ← 16 ujian (SQLite tempatan)
-│   ├── geo.test.mjs          ← 29 ujian (geohash, Haversine, peti bounding)
-│   ├── data.test.mjs         ← 22 ujian (lapisan D1 dengan mock)
-│   ├── routing.test.mjs      ← 22 ujian (OSRM melalui pelayan mock)
-│   ├── votes.test.mjs        ← 21 ujian (confirm/dismiss pada SQLite sebenar)
-│   └── _e2e_live.mjs         ← 13 ujian WebSocket→DO (perlu `wrangler dev`)
-├── ARCHITECTURE.md           ← seni bina + aliran data (ASCII)
+│   ├── schema.test.mjs          ← skema + CHECK constraints
+│   ├── geo.test.mjs             ← geohash, Haversine, peti bounding
+│   ├── data.test.mjs            ← lapisan D1
+│   ├── routing.test.mjs         ← OSRM + User-Agent
+│   ├── votes.test.mjs           ← confirm/dismiss (SQLite sebenar)
+│   ├── geofence.test.mjs        ← geofence koridor
+│   ├── route_cache.test.mjs     ← smart cache (SQLite sebenar)
+│   └── _e2e_live.mjs            ← WebSocket→DO (perlu server hidup)
+├── ARCHITECTURE.md
 └── wrangler.toml
 ```
 
@@ -125,230 +173,61 @@ lalintrafik/
 
 ```bash
 npm install
-
-# 1. Cipta D1
-npx wrangler d1 create lalintrafik
-
-# 2. Guna ID yang diberikan dalam wrangler.toml
-#    database_id = "…"
-
-# 3. Guna skema
-npx wrangler d1 execute lalintrafik --remote --file=db/schema.sql
-
-# 4. Uji setempat
-npm run dev
-
-# 5. Buka demo
-#    frontend/index.html — klik "Cari saya" untuk mula
+npm run db:apply:local     # jadual ke D1 setempat
+npm run dev                # http://localhost:8787
 ```
+
+Buka `frontend/index.html` terus di pelayar untuk peta.
 
 **Ujian:**
 
 ```bash
 npm run typecheck   # 0 ralat
-npm test            # 110 PASS (schema 16, geo 29, data 22, routing 22, votes 21)
-npm run test:e2e    # 13 PASS — perlu `wrangler dev` sedang berjalan
+npm test            # 130 PASS (7 fail ujian)
+npm run test:e2e    # 20 PASS — perlu `wrangler dev` sedang berjalan
 ```
-
-### Dua perangkap yang dijumpai (dan dikunci oleh ujian)
-
-**1. Ralat Hono tidak dapat ditangkap oleh middleware `try/catch`.**
-Hono 4 (`compose.js`) menangkap pengecualian di peringkat `dispatch` route
-dan menyerahkannya terus kepada `onError` — middleware luaran tidak pernah
-melihat penolakan `next()`. Akibatnya setiap ralat menjadi `500 Internal
-Server Error` yang sama. Gunakan `app.onError(handler)`, bukan
-`app.use('*', tryCatch)`.
-
-**2. OSRM demo menolak `User-Agent` kosong dengan 403.**
-`router.project-osrm.org` dibalukan nginx yang membalas **403 Forbidden**
-kepada sebarang permintaan tanpa `User-Agent` yang sah. Tanda sebenar:
-badan balasan ialah HTML nginx, bukan JSON OSRM — jadi jangan salah sangka
-dengan rangkaian. Hantar `User-Agent: lalintrafik/1.0 (...)`. Diuji dalam
-`test/routing.test.mjs` melalui pelayan mock yang merakam kepala yang
-diterima.
 
 ---
 
 ## Rujukan API
 
-### Hantar laporan
+### Maklumat
 
 ```http
-POST /api/v1/reports
-X-Device-Id: dev-abc123
-Content-Type: application/json
-
-{
-  "type": "ACCIDENT",
-  "lat": 3.1390,
-  "lng": 101.6869,
-  "accuracyM": 12,
-  "note": "Bas rempat menunggu di sisi",
-  "severity": 2
-}
+GET /              → nama, userAgent, zon operasi
+GET /healthz       → { status: "ok", ts }
 ```
 
-```
-201 Created
-{ "success": true, "data": { "id": "…", "type": "ACCIDENT", "expiresAt": "…", "ttlMs": 2700000 } }
-```
+### Laporan
 
-### Laporan berdekatan
-
-```http
-GET /api/v1/reports/nearby?lat=3.1390&lng=101.6869&radiusM=5000&limit=50
-GET /api/v1/reports/nearby?lat=3.1390&lng=101.6869&radiusM=5000&type=SPEED_TRAP
-```
-
-```json
-{
-  "success": true,
-  "data": [{ "id": "…", "type": "ACCIDENT", "lat": 3.1391, "lng": 101.687,
-             "distanceM": 15, "confirmCount": 3, "confidence": 75 }],
-  "meta": { "center": { "lat": 3.139, "lng": 101.6869 }, "radiusM": 5000, "count": 1 }
-}
-```
-
-### Undian
-
-```http
-POST /api/v1/reports/:id/confirm?cell=w283cg   → { "confirmCount": 4, "confidence": 80 }
-POST /api/v1/reports/:id/dismiss?cell=w283cg   → { "dismissCount": 1, "confidence": 67 }
-```
+| Kaedah | Laluan | Keterangan |
+|---|---|---|
+| POST | `/api/v1/reports` | Header `X-Device-Id` diperlukan |
+| GET | `/api/v1/reports/nearby` | `lat`, `lng`, `radiusM` — semua pilihan, lalai ke Putatan |
+| GET | `/api/v1/reports` | `minLat`, `minLng`, `maxLat`, `maxLng` |
+| GET | `/api/v1/reports/:id` | satu laporan |
+| POST | `/api/v1/reports/:id/confirm` | `?cell=` untuk siaran masa nyata |
+| POST | `/api/v1/reports/:id/dismiss` | `?cell=` untuk siaran masa nyata |
 
 ### Routing
 
 ```http
-GET /api/v1/routing?lat1=3.139&lng1=101.6869&lat2=1.4927&lng2=103.7414
+GET /api/v1/routing?lat1=5.9804&lng1=116.0735&lat2=5.4500&lng2=115.7300
 ```
 
-```json
-{
-  "success": true,
-  "data": { "distanceM": 292610, "durationS": 10843,
-             "geometry": { "type": "LineString", "coordinates": [[101.6869, 3.139], …] },
-             "provider": "osrm", "cached": false }
-}
-```
+Karakter respons: `{ success, data: { distanceM, durationS, geometry, provider, cached } }`
+— `provider` ialah `"osrm"` untuk laluan baharu dan `"cache"` untuk yang
+dibaca dari D1.
 
-### WebSocket
+### Masa nyata
 
-```js
-const ws = new WebSocket(`https://<worker>/api/v1/ws?cell=${geohash(lat, lng, 6)}`);
-ws.send(JSON.stringify({ kind: 'subscribe', cell, lat, lng }));
-
-ws.onmessage = (ev) => {
-  const msg = JSON.parse(ev.data);
-  // { kind: 'presence', online: 12 }
-  // { kind: 'report.new', report: {…} }
-  // { kind: 'report.confirm', id, confirmCount, confidence }
-};
+```http
+GET /api/v1/ws?cell=<geohash 6 aksara>
 ```
 
 ---
 
-## Keputusan Rekabentuk
+## Bacaan Lanjut
 
-### Kenapa peti bounding + Haversine, bukan hanya Haversine?
-
-D1 tidak mempunyai indeks spatial (tiada PostGIS, tiada R-tree dalam SQLite Edge).
-Haversine tulen memerlukan `SELECT * FROM reports` — setiap laporan, seluruh dunia,
-setiap kali. Tidak boleh diterima.
-
-Sebaliknya: hitung peti segi empat tepat (min/max lat/lng), gunakan `idx_reports_bbox`
-untuk mengurangkan kepada ratusan baris, kemudian gunakan Haversine untuk ketepatan.
-Peti itu sengaja melebih-lebihkan (ia segi empat tepat), jadi tapisan kedua diperlukan.
-
-**Kos:** indeks berjaya pada set 10,000 baris dalam **1.53ms**.
-
-### Kenapa Durable Objects, bukan KV atau D1?
-
-Siaran masa nyata memerlukan mengubah soket yang sudah sedia ada. Hanya Durable Objects
-mengekalkan WebSockets. KV dan D1 adalah store — bukan saluran.
-
-DO juga menyelesaikan masalah kedua: **geofencing**. Dengan satu DO setiap sel geohash-6
-(~1.2km × 0.6km), DO tahu tepat siapa yang berdekatan. Tiada pertanyaan "siapa dalam 5km
-saya?" — ia sudah diketahui secara struktur.
-
-### Kenapa satu sel setiap laporan?
-
-Garis lintang 6 aksara geohash ≈ 1.2km × 0.6km. Ia lebih besar daripada radius 5km
-yang anda pertanyakan — maksudnya sel yang sama sering kali dilanggan oleh ramai
-pengguna berdekatan. Fanout kepada 8 jiranan meliputi ~10km, supaya pengguna di
-sempadan masih melihat insiden seberang sempadan.
-
-### Kenapa hulung `device_id`, bukan akaun?
-
-Tiada kata laluan, tiada e-mel, tiada data peribadi. Pengguna kekal tanpa nama; peranti
-mereka mengenal pasti mereka. Ini menghapuskan seluruh kelas risiko privasi — dan
-menghapuskanfriction pendaftaran.
-
-### TTL mengikut jenis insiden
-
-| Jenis | TTL | Sebab |
-|---|---|---|
-| `ACCIDENT` | 45 minit | insiden singkat |
-| `SPEED_TRAP` | 90 minit | penguatkuasaan bergerak |
-| `POLICE` | 90 minit | sama |
-| `TRAFFIC_JAM` | 60 minit | kesesakan berubah cepat |
-| `HAZARD` | 6 jam | bahaya kekal |
-| `ROAD_CLOSURE` | 24 jam | penutupan rasmi |
-| `WEATHER` | 3 jam | berubah |
-| `COMMUNITY` | 12 jam | berita komuniti |
-
-Laporan tamat disaring dalam setiap pertanyaan (`expires_at > ?`) **dan** dibuang oleh
-cron, jadi D1 tidak membesar tanpa had.
-
-### CORS: tuas halus yang mudah tersalah
-
-```ts
-// SALAH — imbasan menafikan kombinasi ini
-'Access-Control-Allow-Origin: *'
-'Access-Control-Allow-Credentials: true'
-
-// BETUL — pacak balik asal sebenar
-'Access-Control-Allow-Origin: <origin>'
-'Vary: Origin'
-```
-
----
-
-## Had dan Batasan
-
-| Had | Nilai | Diurus bagaimana |
-|---|---|---|
-| CPU Worker | 30s berbayar / 10ms percuma | DO menyerap kerja siaran |
-| Subrequest | 50 percuma / 1000 berbayar | 9 subrequest setiap laporan (1 sel + 8 jiran) |
-| Baca D1 | 5B/hari percuma | peti bounding + index |
-| Tulis D1 | 100k/hari percuma | disederhanakan |
-| WebSocket DO | 3MB/hari keluar percuma | hibernasi |
-| Payload | 100MB | had badan 8KB dalam `readJson()` |
-
-**Titik berkala:** ~10,000 laporan/hari, apabila subrequest mula dikenakan.
-Naik taraf kepada Workers Paid ($5/bln) atau kumpulkan siaran.
-
----
-
-## Keselamatan
-
-- **Tiada rahsia dalam `wrangler.toml`** — guna `wrangler secret put`
-- **Had badan** menolak muat naik gergasi sebelum diproses
-- **Had kadar** untuk laluan tulis (naik taraf: `ratelimit` binding)
-- **Tiada data peribadi** disimpan — hanya `device_id` dan lokasi yang dihantar
-- **Ralat D1** tidak didedah kepada pelanggan (hanya log dalaman)
-
----
-
-## Pelan Hala
-
-1. **Siaran berkeselompok** — kumpulkan laporan untuk sel yang sama dan siarkan sekali
-2. **Arah perbelaluan** — libatkan pilihan rute dalam pertanyaan nearby
-3. **Belanjawan jalan** — pastikan laporan secara automatik apabila pengguna lulus
-4. **Foto** — lampiran R2 untuk laporan
-5. **Analisis** — taburan insiden dari semasa ke semasa
-
----
-
-## Lesen
-
-MIT
+- `ARCHITECTURE.md` — aliran data, model kekerapan, perangkap
+- `db/schema.sql` — skema penuh dengan komen rekaan
