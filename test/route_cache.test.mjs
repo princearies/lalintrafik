@@ -93,11 +93,16 @@ function startOsrm() {
 }
 
 // ---------- laluan sebenar dalam koridor ----------
-const KK = { lat: 5.9804, lng: 116.0735 };          // Kota Kinabalu
+// KOORDINAT FIXTURE DIPILIH JAUH DARI SEMPADAN `.0005`.
+// 116.0735 duduk TEPAT di sempadan sel 116.073/116.074 dan terbelah antara
+// dua sel tanpa sebab yang dapat dilihat — lihat references/geo-aggregation-on-d1.md.
+// 116.0734 berada 11 m di dalam sel, jadi selnya tidak bergolek.
+const KK = { lat: 5.9804, lng: 116.0734 };          // Kota Kinabalu
 const MEMBAKUT = { lat: 5.4500, lng: 115.7300 };    // Kg Pimping, Membakut
-// 3 dp: 5.9804 → 5.98 ; 116.0735 → 116.074 ; 5.4500 → 5.45 ; 115.7300 → 115.73
-const KK_3DP = { lat: 5.98, lng: 116.074 };
-const MEMBAKUT_3DP = { lat: 5.45, lng: 115.73 };
+// Jangkaan 3 dp diperoleh daripada fungsi yang sama — ujian ini tidak pernah
+// mengekodkan sempadan secara manual, jadi ia tidak akan lapuk lagi.
+const KK_3DP = { lat: routeKeyRound(KK.lat), lng: routeKeyRound(KK.lng) };
+const MEMBAKUT_3DP = { lat: routeKeyRound(MEMBAKUT.lat), lng: routeKeyRound(MEMBAKUT.lng) };
 
 console.log('\n[1] Miss → OSRM dipanggil → disimpan');
 {
@@ -118,7 +123,7 @@ console.log('\n[1] Miss → OSRM dipanggil → disimpan');
     'baris B→A juga disimpan (arah songsang)');
   ok(rows.every((r) => r.distance === 234_567 && r.duration === 8_123),
     'distance & duration disimpan');
-  ok(rows.every((r) => r.origin_lat === Math.round(r.origin_lat * 1000) / 1000),
+  ok(rows.every((r) => r.origin_lat === routeKeyRound(r.origin_lat)),
     'koordinat disimpan pada tepat 3 tempat perpuluhan');
   ok(rows.every((r) => typeof r.route_data === 'string' && r.route_data.startsWith('{"type":"LineString"')),
     'route_data menyimpan GeoJSON LineString mentah');
@@ -163,12 +168,23 @@ console.log('\n[4] Kunci dibundarkan 3 dp (~110 m)');
   ok(routeKeyRound(116.05055) === 116.051, `116.05055 → ${routeKeyRound(116.05055)}`);
   ok(routeKeyRound(5.9804) === 5.98, `5.9804 → ${routeKeyRound(5.9804)}`);
 
+  // Kunci JS mesti jatuh dalam sel yang SAMA seperti ROUND() SQLite.
+  // `Math.round(v * 1000) / 1000` gagal di sini: 116.0505 → 116.051,
+  // manakala SQLite → 116.050. Jika kedua-dua laluan lari berasingan,
+  // kunci yang dijana JS tidak akan pernah menemui sel yang dijana SQL.
+  const sqliteDb = new DatabaseSync(':memory:');
+  const sqliteRound = (v) => sqliteDb.prepare('SELECT ROUND(?, 3) AS a').get(v).a;
+  for (const v of [116.0505, 116.0515, 116.0525, 116.0535, 116.0545, 116.0555]) {
+    ok(routeKeyRound(v) === sqliteRound(v),
+      `kunci JS sepadan dengan ROUND() SQLite bagi ${v} (${routeKeyRound(v)} vs ${sqliteRound(v)})`);
+  }
+
   const t = freshDb();
   const osrm = await startOsrm();
   await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [KK, MEMBAKUT]);
 
   const r = await getRouteCached(ctx({ OSRM_BASE_URL: osrm.url }, t.d1), [
-    { lat: 5.98042, lng: 116.07351 },   // ~2 m dari KK
+    { lat: 5.98042, lng: 116.07342 },   // ~2 m dari KK, sel grid yang sama
     { lat: 5.45001, lng: 115.73002 },   // ~1 m dari Membakut
   ]);
   ok(r.cached === true, 'titik ~2 m berbeza tetap HIT (toleransi ~110 m)');

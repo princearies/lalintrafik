@@ -69,11 +69,25 @@ const FETCH_TIMEOUT_MS = 8_000;
  * (bukan navigasi pintu-ke-pintu) perbezaan itu tidak ketara, dan kadar
  * hit cache meningkat dengan ketara.
  */
-const ROUTE_KEY_FACTOR = 1_000;   // 10^3 → 3 tempat perpuluhan
+const ROUTE_KEY_DP = 3;   // kedalaman grid kunci (~110 m)
 
-/** Bundarkan koordinat kepada 3 tempat perpuluhan untuk kunci cache. */
+/**
+ * Bundarkan koordinat kepada 3 tempat perpuluhan untuk kunci cache.
+ *
+ * `toFixed` di sini SENGAJA — `Math.round(v * 1000) / 1000` berbeza daripada
+ * `ROUND(v, 3)` SQLite pada nilai sempadan. Bagi `116.0505` ia menghasilkan
+ * `116.051`, manakala SQLite menghasilkan `116.050`.
+ *
+ * Punca ia: pendaraban `v * 1000` membundarkan double terlebih dahulu
+ * (`116.0505 * 1000` → tepat `116050.5`), kemudian pengisihan bekerja pada
+ * nilai yang sudah berubah. `toFixed` pula membundar pada double yang sama
+ * seperti yang dilihat `printf("%.*f")` SQLite, jadi kedua-dua laluan jatuh
+ * dalam sel yang sama — kunci JS dan sel SQL tidak akan lari berasingan.
+ *
+ * Lihat references/geo-aggregation-on-d1.md.
+ */
 export function routeKeyRound(v: number): number {
-  return Math.round(v * ROUTE_KEY_FACTOR) / ROUTE_KEY_FACTOR;
+  return Number(v.toFixed(ROUTE_KEY_DP));
 }
 
 /**

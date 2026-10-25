@@ -106,6 +106,14 @@ laluan yang titik mulanya berbeza ~100 m berkongsi entri yang sama. Untuk
 trafik araya (bukan navigasi pintu-ke-pintu) perbezaan itu tidak ketara,
 dan kadar hit cache meningkat dengan ketara.
 
+Pembundaran dilakukan dengan `toFixed(3)`, **bukan**
+`Math.round(v * 1000) / 1000`. Keduanya berbeza pada nilai sempadan — bagi
+`116.0505` yang pertama memberi `116.050` manakala yang kedua memberi
+`116.051` — kerana pendaraban `v * 1000` membundarkan double terlebih
+dahulu. `toFixed` membundar pada double yang sama seperti `ROUND()` SQLite
+lihat, jadi kunci JS dan sel SQL tidak akan lari berasingan. Lihat
+`references/geo-aggregation-on-d1.md` dalam skill `cloudflare-workers-d1`.
+
 **A→B dan B→A berkongsi entri.** Laluan disimpan dalam **kedua-dua** susunan,
 jadi bacaan sentiasa satu pertanyaanan dan laluan balik dari Membakut ke KK
 tidak pernah memanggil OSRM. Kosnya dua baris untuk satu laluan — berbaloi.

@@ -169,6 +169,7 @@ const state = {
   // Paparan hotspot: giliran antara kluster (hotspot) dan penanda individu.
   hotspotMode: true,
   hotspotsReady: false,
+  hotspotRows: [],   // sel terkini dari /api/v1/hotspots
 };
 
 /** Had geofence zon operasi (meter) — mesti sepadan dengan pelayan. */
@@ -238,9 +239,10 @@ map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
 // ------------------------------------------------------------
 //  Lapisan hotspot — kluster GeoJSON native MapLibre (supercluster)
 //
-//  Kluster dikira di PELAYAN (/api/v1/hotspots) untuk senarai kedudukan;
-//  di peta pula MapLibre mengikutkan sendiri dari titik mentah. Kedua-duanya
-//  menggunakan ROUND(lat, 3) supaya angka yang dipaparkan sepadan.
+//  Sumber kluster dibekalkan SEL dari /api/v1/hotspots — BUKAN titik mentah.
+//  Jika titik mentah digunakan, MapLibre mengira klasternya sendiri dengan
+//  radius bawaannya dan klaster peta tidak akan sepadan dengan sel grid
+//  ~111 m dalam panel. Satu sumber, satu grid.
 // ------------------------------------------------------------
 const HOTSPOT_SRC = 'hotspots';
 
@@ -409,29 +411,46 @@ function removeMarker(id) {
 // ============================================================
 //  Hotspot — GeoJSON untuk lapisan kluster
 // ============================================================
-/** Tukar senarai laporan menjadi GeoJSON FeatureCollection. */
-function hotspotGeoJSON(reports) {
+/**
+ * Tukar SEL HOTSPOT (dari /api/v1/hotspots) menjadi GeoJSON.
+ *
+ * PENTING: sumber kluster dibekalkan SEL, bukan titik mentah. Jika ia
+ * dibekalkan titik mentah, MapLibre mengira klasternya sendiri dengan
+ * radius bawaannya — dan klaster peta tidak akan pernah sepadan dengan
+ * sel grid ~111 m yang disenarai dalam panel. Satu sumber, satu grid.
+ */
+function hotspotGeoJSON(cells) {
   return {
     type: 'FeatureCollection',
-    features: reports.map((r) => ({
+    features: cells.map((c) => ({
       type: 'Feature',
-      geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
+      geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
       properties: {
-        id: r.id,
-        type: r.type,
-        note: r.note ?? '',
-        severity: r.severity ?? 0,
-        confirmCount: r.confirmCount ?? 0,
-        dismissCount: r.dismissCount ?? 0,
+        id: `hotspot-${c.rank}`,
+        type: c.dominantType,
+        note: '',
+        severity: 0,
+        confirmCount: 0,
+        dismissCount: 0,
+        total: c.total,
+        heat: c.heat,
       },
     })),
   };
 }
 
-/** Segerakkan data kluster dengan laporan semasa. */
-function syncHotspots(reports) {
-  if (!state.hotspotsReady) return;
-  map.getSource(HOTSPOT_SRC).setData(hotspotGeoJSON(reports));
+/**
+ * Segerakkan lapisan kluster dengan sel hotspot terkini.
+ *
+ * Disimpan dalam `state.hotspotRows` supaya togol pandangan tidak kehilangan
+ * data, dan supaya `refresh()` boleh memaksa semula tanpa membuat panggilan
+ * kedua. Gagal di sini TIDAK boleh menggagalkan peta — kluster kekal berfungsi
+ * daripada sel terakhir yang berjaya dimuat.
+ */
+function syncHotspots(cells) {
+  state.hotspotRows = cells;
+  if (!state.hotspotsReady) return;   // peta belum sedia; refresh() akan panggil semula
+  map.getSource(HOTSPOT_SRC).setData(hotspotGeoJSON(cells));
 }
 
 /**
@@ -480,6 +499,9 @@ async function renderHotspots() {
       `&gridDp=${HOTSPOT_GRID_DP}&limit=${HOTSPOT_LIMIT}`,
     );
     const rows = res.data;
+    // Satu panggilan membekalkan kedua-dua permukaan: senarai kedudukan
+    // DAN lapisan kluster di atas. Lihat hotspotGeoJSON().
+    syncHotspots(rows);
     if (!rows.length) {
       list.innerHTML = '<div class="empty">Tiada laporan dalam pandangan ini</div>';
       return;
@@ -535,18 +557,20 @@ async function refresh() {
     $('s-count').textContent = reports.length;
     const near = reports.filter((r) => (r.distanceM ?? 9e9) <= 5000).length;
     $('s-near').textContent = near;
+    // Penanda individu hanya dalam mod "Semua laporan" — lihat applyViewMode().
     for (const r of reports) upsertMarker(r);
-
-    // Lapisan kluster dibina daripada titik mentah yang sama — satu panggilan.
-    syncHotspots(reports);
 
     log('info', `muat ${reports.length} laporan`);
   } catch (e) {
     log('err', e.message);
   }
 
-  // Senarai kedudukan hotspot — panggilan kedua, dari endpoint agregasi.
-  // Gagal di sini tidak boleh menggagalkan peta (kluster tetap berfungsi).
+  // Lapisan kluster dibekalkan SEL HOTSPOT, bukan titik mentah — jadi ia
+  // memaksa semula daripada sel yang dihantar endpoint agregasi.
+  syncHotspots(state.hotspotRows || []);
+
+  // Senarai kedudukan hotspot + lapisan kluster — satu panggilan agregasi.
+  // Gagal di sini tidak boleh menggagalkan peta (penanda tetap berfungsi).
   renderHotspots().catch(() => {});
 }
 
