@@ -15,8 +15,8 @@ import urllib.request
 import uuid
 
 ACC = "2c48feaf73f0023e94ead812fcb5f01e"
-NAME = "lalintrafik"
-DBID = "ffbfab4a-b643-4b04-9274-b06e0402b7fc"
+NAME = "mykira-map"
+DBID = "ab655b48-8b45-4fb3-a55c-70210837344d"
 BUNDLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dist-bundle", "index.js")
 
 metadata = {

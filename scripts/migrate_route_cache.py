@@ -14,7 +14,7 @@ import sys
 import urllib.request
 
 ACC = "2c48feaf73f0023e94ead812fcb5f01e"
-DBID = "ffbfab4a-b643-4b04-9274-b06e0402b7fc"
+DBID = "ab655b48-8b45-4fb3-a55c-70210837344d"
 TOKEN = os.environ["CLOUDFLARE_API_TOKEN"].strip()
 
 DDL = """

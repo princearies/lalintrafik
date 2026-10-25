@@ -6,6 +6,8 @@ Aplikasi web komuniti untuk laporan trafik, navigasi dan insiden — ala Waze, t
 
 **Siap untuk Android** — API REST dan WebSocket adalah tulen, tiada kekangenan framework frontend.
 
+**Worker:** `https://mykira-map.mykira.workers.dev` · **Repo:** `github.com/princearies/mykira-map`
+
 ---
 
 ## Ciri

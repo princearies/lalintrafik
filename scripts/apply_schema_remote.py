@@ -9,11 +9,12 @@ import json
 import os
 import sys
 import urllib.request
+from os import path
 
 ACC = "2c48feaf73f0023e94ead812fcb5f01e"
-DBID = "ffbfab4a-b643-4b04-9274-b06e0402b7fc"
+DBID = "ab655b48-8b45-4fb3-a55c-70210837344d"
 TOKEN = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db", "schema.sql")
+SCHEMA = path.join(path.dirname(path.dirname(os.path.abspath(__file__))), "db", "schema.sql")
 
 sql = open(SCHEMA, encoding="utf-8").read()
 print(f"schema: {len(sql)} aksara, {sql.count(';')} titik koma")

@@ -1,4 +1,4 @@
-# LALINTRAFIK — Seni Bina Sistem & Aliran Data
+# MYKIRA MAP — Seni Bina Sistem & Aliran Data
 
 Aplikasi Waze-like: laporan trafik komuniti, navigasi, dan siaran masa nyata.
 Cloudflare Workers + Hono + D1 + Durable Objects.
