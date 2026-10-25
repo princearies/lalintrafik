@@ -99,23 +99,29 @@ console.log('\n[1] Skema — lajur gender + CHECK');
   ok(rejected, 'gender haram (ALIEN) ditolak oleh CHECK');
 
   // setiap nilai yang dibenarkan diterima
-  for (const g of ['MALE', 'FEMALE', 'UNSPECIFIED']) {
-    const id = 'u-' + g;
+  for (const g of ['MALE', 'FEMALE']) {
     let accepted = true;
     try {
       db.prepare('INSERT INTO users (id, device_id, gender, created_at, last_seen_at) VALUES (?,?,?,?,?)')
-        .run(id, 'd-' + g, g, 1, 1);
+        .run('u-' + g, 'd-' + g, g, 1, 1);
     } catch { accepted = false; }
     ok(accepted, `gender ${g} diterima`);
   }
 
-  // NULL (tidak dinyatakan) juga dibenarkan
+  // NULL (tidak dinyatakan) juga dibenarkan — pengguna tidak dipaksa memilih
   let nullOk = true;
   try {
     db.prepare('INSERT INTO users (id, device_id, gender, created_at, last_seen_at) VALUES (?,?,?,?,?)')
       .run('u-null', 'd-null', null, 1, 1);
   } catch { nullOk = false; }
   ok(nullOk, 'gender NULL (tidak dinyatakan) diterima');
+
+  // UNSPECIFIED sudah dibuang — hanya Lelaki/Perempuan/kosong dibenarkan
+  let unspecRejected = false;
+  try {
+    db.prepare("INSERT INTO users (id, device_id, gender, created_at, last_seen_at) VALUES ('u-unspec','d-unspec','UNSPECIFIED',1,1)").run();
+  } catch { unspecRejected = true; }
+  ok(unspecRejected, 'gender UNSPECIFIED ditolak (hanya Lelaki/Perempuan/kosong)');
 }
 
 // ------------------------------------------------------------
@@ -311,14 +317,54 @@ console.log('\n[11] Frontend — localStorage + UI + profil dihantar');
   ok(html.includes("maxlength=\"60\""), 'had 60 aksara pada input nama');
   ok(/value="MALE"[\s\S]{0,200}?Lelaki/.test(html), 'pilihan Lelaki wujud');
   ok(/value="FEMALE"[\s\S]{0,200}?Perempuan/.test(html), 'pilihan Perempuan wujud');
-  ok(/value="UNSPECIFIED"[\s\S]{0,200}?Lain-lain/.test(html), 'pilihan Lain-lain wujud');
+  ok(!/UNSPECIFIED/.test(html), 'pilihan "Lain-lain" DIBUANG — hanya Lelaki/Perempuan/kosong');
 
   // profil dihantar bersama laporan
-  ok(/displayName:\s*prof\.displayName/.test(html), 'profil dihantar bersama POST /reports');
-  ok(/displayName:\s*prof\.displayName/.test(html) || html.includes('displayName: prof.displayName'),
-    'profil dihantar bersama mesej WebSocket');
+  ok(html.includes('displayName: prof.displayName'), 'profil dihantar bersama POST /reports');
+  const wsOpen = html.slice(html.indexOf('state.ws.onopen'));
+  ok(wsOpen.includes('displayName: prof.displayName'), 'profil dihantar bersama mesej WebSocket');
   ok(html.includes('encodeURIComponent(prof.displayName)'), 'profil dihantar bersama carian /nearby');
   ok(html.includes('defaultDisplayName()'), 'nama lalai = ID automatik');
+}
+
+console.log('\n[11] Penjejakan langsung — punca isu "peta kaku"');
+{
+  const html = await (await call('/', {}, freshDb())).text();
+
+  // `getCurrentPosition` sahaja = satu pukul = penanda membeku.
+  // `watchPosition` ialah punca peta rasa kaku.
+  ok(html.includes('navigator.geolocation.watchPosition'), 'watchPosition digunakan (bukan getCurrentPosition sahaja)');
+  ok(html.includes('function startTracking()'), 'startTracking() wujud');
+  ok(html.includes('startTracking();'), 'startTracking() DIPANGGIL');
+
+  // penanda mesti diinterpolasi, bukan dilompat
+  ok(html.includes('function moveMe('), 'moveMe() wujud');
+  ok(html.includes('requestAnimationFrame'), 'animasi penanda melalui rAF');
+  ok(/dur:\s*850/.test(html), 'tempoh interpolasi ditetapkan (850ms)');
+  ok(html.includes('easeInOut'), 'lenaan smoothstep digunakan');
+  ok(html.includes('dist > 2_000'), 'lompatan jauh (>2 km) tidak dianimasikan');
+
+  // anak panah haluan
+  ok(html.includes('setMeHeading('), 'anak panah berputar mengikut haluan');
+  ok(html.includes('rotate('), 'putaran haluan dipakai');
+
+  // jejak pergerakan
+  ok(html.includes("id: 'trail'"), 'lapisan jejak wujud');
+  ok(html.includes('state.trail'), 'state.trail dikekalkan');
+
+  // mod ikut saya
+  ok(html.includes('id="toggle-follow"'), 'butang "Ikut saya" wujud');
+  ok(html.includes("$('toggle-follow').onclick = toggleFollow"), 'butang dipasangkan');
+  ok(html.includes('state.following'), 'state.following dikekalkan');
+  ok(html.includes("map.on('dragstart'"), 'mod ikut padam apabila peta digerakkan');
+
+  // statistik langsung
+  ok(html.includes('id="s-speed"'), 'paparan kelajuan wujud');
+  ok(html.includes('id="s-acc"'), 'paparan jitu lokasi wujud');
+  ok(html.includes('km/j'), 'kelajuan dalam km/j');
+
+  // sempadan sel → langgan semula
+  ok(html.includes('prevCell !== state.cell'), 'perubahan sel geohash dikesan');
 }
 
 console.log(`\n${pass} PASS, ${fail} FAIL`);

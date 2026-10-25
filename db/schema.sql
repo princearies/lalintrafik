@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
   device_id    TEXT NOT NULL UNIQUE,          -- hulung dari localStorage client
   display_name TEXT,                          -- nama paparan (pilihan pengguna)
   gender       TEXT                           -- pilihan pengguna
-                 CHECK (gender IN ('MALE','FEMALE','UNSPECIFIED')),
+                 CHECK (gender IN ('MALE','FEMALE')),
   created_at   INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL
 );

@@ -37,6 +37,7 @@ Untuk pembangunan tempatan, jalankan `npm run dev` dan set
 | Laporan insiden | `POST /api/v1/reports` — kemalangan, perangkap, bahaya, sesak, polis, tutup jalan |
 | Kuari berdekatan | `GET /api/v1/reports/nearby` — peti bounding + Haversine, di bawah 5ms |
 | Masa nyata | WebSocket ke Durable Object, siaran geofenced kepada 8 sel jiranan |
+| Penjejakan langsung | `watchPosition` + penanda beranimasi, haluan, kelajuan, jejak |
 | Navigasi | `GET /api/v1/routing` — OSRM dengan **smart cache D1** |
 | Hotspot | `GET /api/v1/hotspots` — agregasi kepadatan grid + lapisan kluster |
 | Profil pengguna | `GET/PATCH /api/v1/profile` — nama paparan + jantina, tanpa akaun |

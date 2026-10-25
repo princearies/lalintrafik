@@ -19,7 +19,10 @@ export const REPORT_STATUSES = ['ACTIVE', 'EXPIRED', 'DISMISSED'] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
 // ---------- Jantina (padan CHECK constraints dalam schema.sql) ----------
-export const GENDERS = ['MALE', 'FEMALE', 'UNSPECIFIED'] as const;
+//
+// Hanya dua pilihan + kosong. "Kosong" (NULL) bermaksih tidak dinyatakan —
+// pengguna yang tidak mahu berkongsi tidak dipaksa memilih.
+export const GENDERS = ['MALE', 'FEMALE'] as const;
 export type Gender = (typeof GENDERS)[number];
 
 // ---------- Baris D1 (mentah) ----------

@@ -18,6 +18,7 @@ Token mesti diambil dari VPS `~/workspace/web3-agent/.env`.
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from os import path
 
@@ -44,8 +45,14 @@ def query(sql: str) -> dict:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        # D1 memulangkan HTTP 400 — BUKAN 200 + `success:false` — apabila
+        # statement ditolak, contohnya CHECK constraint. Ini tetap bermaksud
+        # "ditolak", jadi ia bukan ralat sambungan.
+        return {"success": False, "errors": [{"message": e.read().decode()[:200]}]}
 
 
 # ---------- 1. semak keadaan semasa ----------
@@ -59,16 +66,18 @@ names = [c.get("name") for c in rows]
 print("kolom users sedia ada:", ", ".join(names))
 
 if "gender" in names:
-    print("LALUAN: lajur `gender` sudah wujud — tiada tindakan.")
-    sys.exit(0)
+    print("LALUAN: laluan akan diteruskan kepada bahagian pengesahan.")
 
-# ---------- 2. tambah lajur ----------
-print("menambah lajur `gender`…")
-out = query(ADD_GENDER)
-if not out.get("success"):
-    print("GAGAL:", json.dumps(out.get("errors"), indent=2))
-    sys.exit(1)
-print("meta:", json.dumps((out.get("result") or [{}])[0].get("meta", {})))
+# ---------- 2. tambah lajur (hanya jika belum wujud) ----------
+if "gender" in names:
+    print("LALUAN: lajur `gender` sudah wujud — tiada tindakan ALTER.")
+else:
+    print("menambah lajur `gender`…")
+    out = query(ADD_GENDER)
+    if not out.get("success"):
+        print("GAGAL:", json.dumps(out.get("errors"), indent=2))
+        sys.exit(1)
+    print("meta:", json.dumps((out.get("result") or [{}])[0].get("meta", {})))
 
 # ---------- 3. sahkan ----------
 after = query("PRAGMA table_info(users)")

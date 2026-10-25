@@ -176,6 +176,7 @@
   <div class="row">
     <button id="send">📍 Hantar di lokasi saya</button>
     <button id="locate">🎯 Cari saya</button>
+    <button id="toggle-follow" title="Kamera mengikut pergerakan anda">🧭 Ikut saya</button>
   </div>
 
   <div class="row">
@@ -192,6 +193,8 @@
 
   <div class="stat"><span>Laporan berdekatan</span><b id="s-count">0</b></div>
   <div class="stat"><span>Dalam 5 km</span><b id="s-near">0</b></div>
+  <div class="stat"><span>Kelajuan</span><b id="s-speed">0 km/j</b></div>
+  <div class="stat"><span>Jitu lokasi</span><b id="s-acc">—</b></div>
   <div class="stat"><span>Online (sel ini)</span><b id="s-online">0</b></div>
   <div class="stat"><span>WebSocket</span><b id="s-ws">terputus</b></div>
   <div class="stat"><span>Sel geohash</span><b id="s-cell">—</b></div>
@@ -212,7 +215,6 @@
         <option value="">— Tidak dinyatakan —</option>
         <option value="MALE">Lelaki</option>
         <option value="FEMALE">Perempuan</option>
-        <option value="UNSPECIFIED">Lain-lain</option>
       </select>
     </div>
     <div class="row">
@@ -345,6 +347,13 @@ const state = {
   hotspotMode: true,
   hotspotsReady: false,
   hotspotRows: [],   // sel terkini dari /api/v1/hotspots
+
+  // Penjejakan langsung — lihat startTracking().
+  cell: null,             // sel geohash p6 semasa
+  watchId: null,          // id watchPosition, null = tidak berjalan
+  following: false,       // kamera mengikut pengguna (mod "ikut saya")
+  trail: [],              // jejak pergerakan, [lng, lat]
+  lastSessionPush: 0,     // doh::now_ms sesi terakhir dihantar
 };
 
 /** Had geofence zon operasi (meter) — mesti sepadan dengan pelayan. */
@@ -535,10 +544,33 @@ map.on('load', () => {
   log('info', 'lapisan hotspot sedia');
 });
 
-// penanda lokasi pengguna
+// penanda lokasi pengguna — gaya Waze: anak panah yang BERPUTAR mengikut
+// haluan, dan bergerak LANCAR (interpolasi sendiri, bukan lompatan).
+//
+// Lapisan luar (#me-pos) diletakkan oleh MapLibre. Lapisan dalam (#me-arrow)
+// pula berputar mengikut `heading` — MapLibre tidak mengubah `transform`
+// elemen dalam, jadi kedua-duanya boleh wujud serentak.
 const meEl = document.createElement('div');
-meEl.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#1f6feb;border:3px solid #fff;box-shadow:0 0 0 4px rgba(31,111,235,.25)';
+meEl.id = 'me-pos';
+meEl.style.cssText = 'width:34px;height:34px;pointer-events:none;';
+const meArrow = document.createElement('div');
+meArrow.id = 'me-arrow';
+meArrow.textContent = '▲';
+meArrow.style.cssText = [
+  'position:absolute;left:50%;top:50%;',
+  'transform:translate(-50%,-58%) rotate(0deg);',
+  'font-size:26px;line-height:1;color:#1f6feb;',
+  'text-shadow:0 0 5px rgba(255,255,255,.9),0 0 2px rgba(255,255,255,1);',
+  'transition:transform .25s ease-out;',
+].join('');
+meEl.appendChild(meArrow);
 const meMarker = new maplibregl.Marker({ element: meEl }).setLngLat([state.center.lng, state.center.lat]).addTo(map);
+
+/** Putar anak panah mengikut haluan (darjah, 0 = utara). */
+function setMeHeading(heading) {
+  if (heading == null || !Number.isFinite(heading)) return;
+  meArrow.style.transform = `translate(-50%,-58%) rotate(${Math.round(heading)}deg)`;
+}
 
 // ------------------------------------------------------------
 //  Lukis laporan
@@ -855,28 +887,164 @@ async function sendReport() {
 }
 
 // ============================================================
-//  Lokasi saya
+//  Lokasi saya — PENJEJAKAN BERTERUSAN (gaya Waze)
+//
+//  Sebelum ini `locate()` menggunakan `getCurrentPosition` — satu pukul.
+//  Selepas tetapan pertama, TIADA apa-apa yang berlaku lagi: penanda
+//  kekal di tempatnya walaupun pengguna memandu sejauh 40 km. Ini punca
+//  peta rasa "kaku".
+//
+//  Sekarang `watchPosition` memantau setiap perubahan, dan penanda
+//  DIINTERPOLASI dari kedudukan lama ke baharu supaya ia meluncur, bukan
+//  melompat. Kamera mengikut apabila `state.following` benar.
 // ============================================================
+
+/** Interpolasi penanda semasa. `null` = tiada animasi berjalan. */
+let meAnim = null;
+let meAnimRaf = 0;
+
+/** smoothstep — permulaan dan penghujung lembut, tiada "tersentak". */
+const easeInOut = (t) => t * t * (3 - 2 * t);
+
+function meLoop() {
+  meAnimRaf = requestAnimationFrame(() => {
+    if (!meAnim) { meAnimRaf = 0; return; }
+    const t = Math.min(1, (performance.now() - meAnim.start) / meAnim.dur);
+    const e = easeInOut(t);
+    const lat = meAnim.from.lat + (meAnim.to.lat - meAnim.from.lat) * e;
+    const lng = meAnim.from.lng + (meAnim.to.lng - meAnim.from.lng) * e;
+    meMarker.setLngLat([lng, lat]);
+    if (state.following) map.setCenter([lng, lat]);
+    if (t < 1) meLoop();
+    else { meAnim = null; meAnimRaf = 0; }
+  });
+}
+
+/**
+ * Gerakkan penanda ke kedudukan baharu dengan LANCAR.
+ *
+ * Jarak panjang (mis. selepas GPS kembali selepas mati) dilompat terus —
+ * menganimasikannya akan membuat penanda "terbang" merentas peta.
+ */
+function moveMe(lat, lng) {
+  const from = { lat: state.center.lat, lng: state.center.lng };
+  const dist = Math.hypot((lat - from.lat) * 111_320, (lng - from.lng) * 111_320);
+  if (dist > 2_000) {
+    meMarker.setLngLat([lng, lat]);
+    state.center = { lat, lng };
+    return;
+  }
+  meAnim = { from, to: { lat, lng }, start: performance.now(), dur: 850 };
+  if (!meAnimRaf) meLoop();
+}
+
+/** Tambah titik pada jejak pergerakan. */
+function pushTrail(lat, lng) {
+  const last = state.trail[state.trail.length - 1];
+  if (last && Math.hypot((lat - last[1]) * 111_320, (lng - last[0]) * 111_320) < 15) return;
+  state.trail.push([lng, lat]);
+  if (state.trail.length > 600) state.trail.shift();
+  if (!map.getSource('trail')) {
+    map.addSource('trail', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } });
+    map.addLayer({
+      id: 'trail', type: 'line', source: 'trail',
+      paint: { 'line-color': '#1f6feb', 'line-width': 4, 'line-opacity': .75 },
+    });
+  }
+  map.getSource('trail').setData({
+    type: 'Feature', properties: {},
+    geometry: { type: 'LineString', coordinates: state.trail },
+  });
+}
+
+/** Suntik semula profil ke sesi langsung (hanya nama/jantina berubah). */
+async function pushSession(lat, lng, heading, speed) {
+  try {
+    await api('/api/v1/reports/session', {
+      method: 'POST',
+      body: JSON.stringify({
+        lat, lng, heading,
+        speedKmh: speed != null ? speed * 3.6 : null,
+        ...currentProfile(),
+      }),
+    });
+  } catch { /* sesi bukan kritikal */ }
+}
+
+/**
+ * Mula penjejakan berterusan.
+ *
+ * `maximumAge: 0` supaya kita tidak menerima jawapan cache lama, dan
+ * `timeout` panjang kerana GPS kadangkala mengambil masa untuk kunci.
+ */
+function startTracking() {
+  if (!navigator.geolocation) { log('err', 'geolocation tidak disokong'); return; }
+  if (state.watchId !== null) return;   // sudah berjalan
+
+  log('info', 'penjejakan lokasi bermula…');
+  state.watchId = navigator.geolocation.watchPosition(
+    (p) => {
+      const { latitude: lat, longitude: lng, accuracy, heading, speed } = p.coords;
+      const prevCell = state.cell;
+      state.center = { lat, lng };
+      state.cell = geohash(lat, lng, 6);
+
+      moveMe(lat, lng);
+      setMeHeading(heading);
+      pushTrail(lat, lng);
+      $('s-speed').textContent = speed != null && speed > 0.3 ? `${Math.round(speed * 3.6)} km/j` : '0 km/j';
+      $('s-acc').textContent = `±${Math.round(accuracy ?? 0)} m`;
+
+      // Sel geohash berubah → langgan semula supaya siaran jiranan sah.
+      if (prevCell && prevCell !== state.cell) {
+        log('ws', `menyeberangi sempadan sel → ${state.cell}`);
+        connectWs();
+        refresh();
+      } else if (!prevCell) {
+        connectWs();
+        refresh();
+      }
+
+      // daftar kehadiran — tidak setiap tetapan (terlalu kerap)
+      const now = Date.now();
+      if (now - state.lastSessionPush > 15_000) {
+        state.lastSessionPush = now;
+        pushSession(lat, lng, heading, speed);
+      }
+    },
+    (e) => log('err', `penjejakan: ${e.message}`),
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 },
+  );
+}
+
+/** Alihkan mod "ikut saya" dan pusatkan semula. */
+function toggleFollow() {
+  state.following = !state.following;
+  const b = $('toggle-follow');
+  if (b) b.classList.toggle('active', state.following);
+  if (state.following) {
+    map.easeTo({ center: [state.center.lng, state.center.lat], duration: 400 });
+    log('ok', 'mod ikut diaktifkan');
+  } else {
+    log('info', 'mod ikut dimatikan — anda bebas menggerakkan peta');
+  }
+}
+
+/** Cari saya — pusatkan pada kedudukan semasa serta-merta. */
 function locate() {
   if (!navigator.geolocation) { log('err', 'geolocation tidak disokong'); return; }
-  log('info', 'minta lokasi…');
   navigator.geolocation.getCurrentPosition(
     (p) => {
-      const { latitude, longitude, accuracy, heading, speed } = p.coords;
-      state.center = { lat: latitude, lng: longitude };
-      meMarker.setLngLat([longitude, latitude]);
-      map.flyTo({ center: [longitude, latitude], zoom: 14 });
-      log('ok', `lokasi ${latitude.toFixed(5)}, ${longitude.toFixed(5)} ±${Math.round(accuracy ?? 0)}m`);
-      connectWs();
-      refresh();
-      // daftar kehadiran
-      api('/api/v1/reports/session', {
-        method: 'POST',
-        body: JSON.stringify({ lat: latitude, lng: longitude, heading, speedKmh: speed != null ? speed * 3.6 : null }),
-      }).catch(() => {});
+      const { latitude: lat, longitude: lng, accuracy } = p.coords;
+      state.center = { lat, lng };
+      state.cell = geohash(lat, lng, 6);
+      meMarker.setLngLat([lng, lat]);
+      map.easeTo({ center: [lng, lat], zoom: 15, duration: 600 });
+      log('ok', `lokasi ${lat.toFixed(5)}, ${lng.toFixed(5)} ±${Math.round(accuracy ?? 0)}m`);
+      pushTrail(lat, lng);
     },
     (e) => log('err', 'lokasi gagal: ' + e.message),
-    { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 },
+    { enableHighAccuracy: true, maximumAge: 5_000, timeout: 12_000 },
   );
 }
 
@@ -913,9 +1081,21 @@ $('types').addEventListener('click', (e) => {
 
 $('send').onclick = sendReport;
 $('locate').onclick = locate;
+$('toggle-follow').onclick = toggleFollow;
 $('toggle-ws').onclick = () => { if (state.ws) { state.ws.close(); } else connectWs(); };
 $('route').onclick = route;
 $('save-profile').onclick = saveProfile;
+
+// Pengguna menggerakkan peta sendiri → mod "ikut saya" mesti padam.
+// Jika tidak, kamera akan melawan sentuhan pengguna sehingga mereka
+// memuat semula halaman.
+map.on('dragstart', () => {
+  if (!state.following) return;
+  state.following = false;
+  const b = $('toggle-follow');
+  if (b) b.classList.remove('active');
+  log('info', 'mod ikut dimatikan — anda menggerakkan peta');
+});
 
 // Togol hotspot ↔ penanda individu
 $('toggle-hotspot').onclick = () => { state.hotspotMode = true; applyViewMode(); };
@@ -995,6 +1175,11 @@ async function boot() {
   }
 
   refresh();
+
+  // PENYELESAN ISU "PETA KAKU": penjejakan berterusan bermula di sini.
+  // `locate()` sahaja hanya memberi satu tetapan, jadi penanda kekal
+  // membeku selepas itu walaupun pengguna memandu.
+  startTracking();
 }
 
 boot();
