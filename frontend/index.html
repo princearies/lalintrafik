@@ -82,33 +82,48 @@
   .hotspots .bar.ROAD_CLOSURE { background: #f85149; }
 
   /* ------------------------------------------------------------
-     Mudah alih.
-     Pada skrin sempit, panel panel ini (panel 268px, hotspot 264px,
-     log 340px) akan bertindan dan menjadikan peta tidak boleh
-     digunakan. Semuanya diregangkan kepada lebar penuh, panel hotspot
-     diletakkan di bawah, dan log ditolak ke atasnya supaya tidak
-     bertindan.
+     Mudah alih — panel BOLEH TUTUP.
+     Pada telefon, panel kawalan ditutup pada mulanya supaya peta
+     kelihatan. Pengguna membuka ia melalui butang ☰. Ini lebih baik
+     daripada memampat panel sehingga ia masih menutup separuh skrin.
      ------------------------------------------------------------ */
+
+  /* Butang terapung ☰ — hanya wujud pada skrin sempit */
+  .fab {
+    display: none;
+    position: absolute; top: 12px; left: 12px; z-index: 30;
+    width: 46px; height: 46px; border-radius: 14px;
+    background: #1f6feb; border: 1px solid #1f6feb; color: #fff;
+    font-size: 19px; line-height: 1; padding: 0;
+    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  }
+  .fab:active { background: #388bfd; }
+
   @media (max-width: 640px) {
+    .fab { display: block; }              /* ☰ terapung */
+
+    /* panel tertutup pada mulanya; .panel.open membukanya */
     .panel {
-      width: calc(100vw - 20px); left: 10px; top: 10px;
-      padding: 10px; max-height: 46vh; overflow-y: auto;
+      display: none;
+      top: 68px; left: 10px; right: 10px; width: auto;
+      max-height: 58vh; overflow-y: auto;
+      padding: 10px;
     }
+    .panel.open { display: block; }
     .panel h1 { font-size: 15px; }
     .panel p  { font-size: 11px; margin-bottom: 8px; }
 
     /* butang lebih besar untuk sentuhan jari */
-    button { padding: 10px 12px; font-size: 13px; }
-    #types button { padding: 8px 9px; font-size: 12px; }
+    button { padding: 11px 12px; font-size: 13px; }
+    #types button { padding: 9px 9px; font-size: 12px; }
+
+    /* log tidak wujud pada telefon — ia hanya mengelirukan di skrin kecil */
+    .log { display: none; }
+    .log.open { display: block; }
 
     .hotspots {
       width: calc(100vw - 20px); right: 10px; bottom: 10px;
-      max-height: 24vh; padding: 8px 10px;
-    }
-    .log {
-      width: calc(100vw - 20px); left: 10px;
-      bottom: calc(24vh + 18px);   /* di atas panel hotspot, bukan bertindan */
-      max-height: 18vh; font-size: 10px;
+      max-height: 22vh; padding: 8px 10px;
     }
     .hint { display: none; }   /* tiada ruang untuk hint pada telefon */
   }
@@ -117,7 +132,10 @@
 <body>
 <div id="map"></div>
 
-<div class="panel">
+<!-- Butang terapung untuk membuka panel — hanya pada telefon -->
+<button id="menu-toggle" class="fab" aria-label="Buka panel kawalan" aria-expanded="false">☰</button>
+
+<div class="panel" id="panel">
   <h1>Mykira Map</h1>
   <p>Koridor KK → Putatan → Papar → Kimanis → Membakut</p>
 
@@ -763,6 +781,34 @@ $('route').onclick = route;
 // Togol hotspot ↔ penanda individu
 $('toggle-hotspot').onclick = () => { state.hotspotMode = true; applyViewMode(); };
 $('toggle-points').onclick = () => { state.hotspotMode = false; applyViewMode(); };
+
+// ------------------------------------------------------------
+//  Panel kawalan boleh tutup (mudah alih)
+// ------------------------------------------------------------
+// Pada telefon panel bermula TERTUTUP supaya peta kelihatan — memampat
+// panel sehingga ia masih menutup separuh skrin adalah lebih buruk
+// daripada menyembunyikannya sehingga diperlukan.
+const MOBILE = () => window.matchMedia('(max-width: 640px)').matches;
+
+function setPanel(open) {
+  const p = $('panel');
+  if (!p) return;
+  p.classList.toggle('open', open);
+  const b = $('menu-toggle');
+  if (b) {
+    b.textContent = open ? '✕' : '☰';
+    b.setAttribute('aria-expanded', String(open));
+    b.setAttribute('aria-label', open ? 'Tutup panel kawalan' : 'Buka panel kawalan');
+  }
+}
+
+$('menu-toggle').onclick = () => setPanel(!$('panel').classList.contains('open'));
+
+// Desktop: panel sentiasa terbuka dan ☰ tersembunyi.
+// Mudah alih: bermula tertutup.
+function syncPanel() { setPanel(!MOBILE()); }
+syncPanel();
+window.addEventListener('resize', syncPanel);
 
 map.on('moveend', () => {
   const c = map.getCenter();

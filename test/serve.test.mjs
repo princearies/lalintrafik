@@ -103,5 +103,31 @@ console.log('\n[5] boot() benar-benar dipanggil');
   ok(js.includes("$('hint').innerHTML"), 'boot() mengemas kini petunjuk');
 }
 
+console.log('\n[6] Panel mudah alih boleh tutup');
+{
+  // Pada telefon panel bermula TERTUTUP supaya peta kelihatan. Memampat
+  // panel sehingga ia masih menutup separuh skrin adalah lebih buruk
+  // daripada menyembunyikannya sehingga diperlukan.
+  const html = await (await app.request('/')).text();
+  const js = html.slice(html.indexOf('<script>'));
+
+  ok(html.includes('id="menu-toggle"'), 'butang ☰ wujud (#menu-toggle)');
+  ok(html.includes('class="panel" id="panel"'), 'panel mempunyai id="panel"');
+  ok(js.includes("$('menu-toggle').onclick"), 'butang ☰ ada pengendali klik');
+  ok(js.includes('syncPanel()'), 'syncPanel() dipanggil');
+  ok(html.includes('max-width: 640px'), 'media query mudah alih wujud');
+
+  // ☰ tersembunyi pada desktop, kelihatan pada telefon
+  ok(/\.fab\s*\{\s*display:\s*none/.test(html), '.fab tersembunyi secara lalai');
+  ok(/\.fab\s*\{\s*display:\s*block/.test(html), '.fab kelihatan pada telefon');
+
+  // panel tersembunyi pada telefon, .panel.open membukanya
+  ok(/\.panel\s*\{\s*display:\s*none/.test(html), '.panel tersembunyi pada telefon');
+  ok(/\.panel\.open\s*\{\s*display:\s*block/.test(html), '.panel.open membukanya');
+
+  // log disembunyikan pada telefon — ia hanya mengelirukan di skrin kecil
+  ok(/\.log\s*\{\s*display:\s*none/.test(html), '.log tersembunyi pada telefon');
+}
+
 console.log(`\n${pass} PASS, ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);
