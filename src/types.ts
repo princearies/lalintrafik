@@ -151,6 +151,13 @@ export interface Env {
   OSRM_BASE_URL?: string;
   /** Kunci GraphHopper — pilihan, untuk failover. */
   GRAPHHOPPER_KEY?: string;
+  /** Titik tengah zon operasi (Kota Kinabalu). */
+  CENTER_LAT?: string;
+  CENTER_LNG?: string;
+  /** Had radius geofence dari titik tengah, dalam METER. */
+  GEOFENCE_RADIUS_M?: string;
+  /** Tempoh cache laluan dalam D1 (ms). */
+  ROUTE_CACHE_TTL_MS?: string;
 }
 
 // ---------- Pemetaan baris → domain ----------

@@ -115,12 +115,17 @@ const TYPE_META = {
 
 const state = {
   type: 'ACCIDENT',
-  center: { lat: 3.1390, lng: 101.6869 },  // Kuala Lumpur
+  // Zon operasi: Kota Kinabalu, Sabah (Sepanggar, Inanam, Donggongon,
+  // Penampang, Putatan, KKIA — semua dalam 25 km dari titik ini).
+  center: { lat: 5.9804, lng: 116.0735 },
   ws: null,
   markers: new Map(),
   routeLayer: null,
   wsRetry: 0,
 };
+
+/** Had geofence zon operasi (meter) — mesti sepadan dengan pelayan. */
+const GEOFENCE_RADIUS_M = 25000;
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
@@ -234,10 +239,12 @@ window.vote = async (id, isConfirm) => {
 // =============================================
 async function refresh() {
   const { lat, lng } = state.center;
-  const radius = Math.max(500, map.getBounds().getEast() - map.getBounds().getWest()
-                                  ? estimateRadius() : 5000);
+  // Radius ikut jumlah pandangan peta, tetapi tidak pernah melebihi
+  // geofence zon operasi — pelayan juga mengekalkan had yang sama.
+  const span = map.getBounds().getEast() - map.getBounds().getWest();
+  const radius = Math.max(500, span > 0 ? estimateRadius() : GEOFENCE_RADIUS_M);
   try {
-    const res = await api(`/api/v1/reports/nearby?lat=${lat}&lng=${lng}&radiusM=${Math.min(radius, 5000)}&limit=200`);
+    const res = await api(`/api/v1/reports/nearby?lat=${lat}&lng=${lng}&radiusM=${Math.min(radius, GEOFENCE_RADIUS_M)}&limit=200`);
     const reports = res.data;
     $('s-count').textContent = reports.length;
     const near = reports.filter((r) => (r.distanceM ?? 9e9) <= 5000).length;

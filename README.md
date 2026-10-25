@@ -19,6 +19,71 @@ Aplikasi web komuniti untuk laporan trafik, navigasi dan insiden — ala Waze, t
 
 ---
 
+## Zon Operasi — Kota Kinabalu, Sabah
+
+Aplikasi ini **berlesen untuk wilayah Kota Kinabalu sahaja**. Semua laporan
+ditapis oleh geofence sebelum menyentuh D1.
+
+| Tetapan | Nilai |
+|---|---|
+| Titik tengah | `5.9804, 116.0735` (lembah KK) |
+| Had radius | **25 km** |
+| Zon dilindungi | Pusat bandar KK, Sepanggar, Inanam, Donggongon, Penampang, Putatan, KKIA |
+
+```
+POST /api/v1/reports   dengan lat/lng di luar 25 km  →  422
+{"success":false,"error":"Laporan di luar zon operasi — 1625.5 km dari pusat Kota Kinabalu (had 25 km)"}
+```
+
+Tiga sifat penting geofence ini:
+
+1. **Dipaksa sebelum D1** — laporan luar zon tidak pernah masuk pangkalan data.
+2. **`/nearby` tanpa koordinat** jatuh balik ke pusat KK dan menaikkan radiusnya
+   kepada 25 km, jadi klien mudah alih tidak perlu tahu lokasi tepat.
+3. **Radius `/nearby` tidak pernah melebihi geofence** — klien tidak boleh menarik
+   laporan dari seluruh Sabah.
+
+Semua tetapan boleh ditukar tanpa mengubah kod, melalui pembolehubah persekitaran:
+
+```toml
+CENTER_LAT          = "5.9804"
+CENTER_LNG          = "116.0735"
+GEOFENCE_RADIUS_M   = "25000"     # 20,000–30,000 sesuai untuk zon ini
+```
+
+Nilai env yang rosak (kosong, bukan nombor, negatif) **jatuh balik kepada lalai**,
+bukan mematikan geofence. Ini penting kerana `Number('')` ialah `0`, bukan `NaN` —
+tanpa semakan rentetan kosong, satu pembolehubah kosong akan mengalih geofence
+ke 0°E tanpa sebarang ralat.
+
+## Cache Laluan (D1)
+
+Routing ialah panggilan keluar yang paling mahal, jadi ia disimpan dalam D1.
+
+```
+permintaan laluan
+      │
+      ├─ kunci kanonik ──→ D1?  ──ada & belum luput──→  balas (< 10 ms, tiada OSRM)
+      │                        │
+      │                        └─tiada/luput─┐
+      │                                      ↓
+      └──────────────────────────→  OSRM  →  simpan ke D1 (24 jam)
+```
+
+- **Kunci kanonik dan tidak bergantung arah** — A→B dan B→A berkongsi entri
+  yang sama, hampir memergingkan kadar hit cache.
+- **Rentetan koordinat terus, bukan hash** — dua laluan berbeza tidak mungkin
+  berkongsi kunci. Cache yang salah lebih buruk daripada cache yang miss.
+- **TTL 24 jam** (`ROUTE_CACHE_TTL_MS`) — geometri jalan berubah sangat lambat.
+
+> **Warisan penting:** tulisan cache **mesti** didaftarkan dengan
+> `ctx.waitUntil()`. Menggunakan `void promise` kelihatan bersih tetapi
+> runtime boleh membatalkan tulisan begitu balasan dihantar — dan ia gagal
+> **senyap**. Gejala fosilnya: hanya 5 baris muncul daripada 32 panggilan,
+> tanpa sebarang mesej ralat.
+
+---
+
 ## Struktur Projek
 
 ```

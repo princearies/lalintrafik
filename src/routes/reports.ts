@@ -17,6 +17,11 @@ import {
 } from '../lib/errors';
 import { cellFor, neighbourCells } from '../lib/geo';
 import {
+  geofenceMessage,
+  geofenceOf,
+  isWithinGeofence,
+} from '../lib/geofence';
+import {
   confirmReport,
   createReport,
   dismissReport,
@@ -41,6 +46,15 @@ reports.post('/', async (c) => {
   const type = requireEnum(body.type, 'type', REPORT_TYPES);
   const lat = requireLat(body.lat);
   const lng = requireLng(body.lng);
+
+  // Geofence — tolak laporan di luar zon operasi KK. Dibuat SEBELUM
+  // sebarang penulisan supaya laporan luar zon tidak pernah masuk D1.
+  if (!isWithinGeofence(lat, lng, c.env)) {
+    return c.json(
+      { success: false, error: geofenceMessage(lat, lng, c.env) },
+      422,
+    );
+  }
 
   const input: CreateReportRequest = {
     type,
@@ -80,11 +94,21 @@ reports.post('/', async (c) => {
 // ------------------------------------------------------------
 reports.get('/nearby', async (c) => {
   const q = c.req.query();
+  const geo = geofenceOf(c.env);
+
+  // Tanpa koordinat, guna pusat zon operasi (Kota Kinabalu).
+  // Klien mudah alih selalunya hanya tahu lokasi kasar mereka.
+  const lat = q.lat !== undefined ? requireLat(q.lat) : geo.lat;
+  const lng = q.lng !== undefined ? requireLng(q.lng) : geo.lng;
+
+  // Radius tidak pernah melebihi geofence — jangan benarkan klien
+  // menarik laporan dari seluruh Sabah.
+  const maxRadius = Math.min(limits(c.env).maxRadiusM, geo.radiusM);
 
   const query: NearbyQuery = {
-    lat: requireLat(q.lat),
-    lng: requireLng(q.lng),
-    radiusM: clampInt(q.radiusM ?? q.radius ?? 5000, 'radiusM', 50, limits(c.env).maxRadiusM, 5000),
+    lat,
+    lng,
+    radiusM: clampInt(q.radiusM ?? q.radius ?? 5000, 'radiusM', 50, maxRadius, 5000),
     limit: clampInt(q.limit ?? 50, 'limit', 1, limits(c.env).maxLimit, limits(c.env).defaultLimit),
     type: q.type ? requireEnum(q.type, 'type', REPORT_TYPES) : undefined,
     since: q.since,

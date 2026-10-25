@@ -31,16 +31,28 @@ metadata = {
             "name": "OSRM_BASE_URL",
             "text": "https://router.project-osrm.org/route/v1/driving",
         },
-        {"type": "plain_text", "name": "MAX_RADIUS_M", "text": "5000"},
+        {"type": "plain_text", "name": "MAX_RADIUS_M", "text": "25000"},
         {"type": "plain_text", "name": "MAX_LIMIT", "text": "200"},
         {"type": "plain_text", "name": "DEFAULT_LIMIT", "text": "50"},
         {"type": "plain_text", "name": "DEFAULT_TTL_MS", "text": "3600000"},
         {"type": "plain_text", "name": "MAX_PEERS_PER_CELL", "text": "500"},
+        # Zon operasi — Kota Kinabalu, Sabah
+        {"type": "plain_text", "name": "CENTER_LAT", "text": "5.9804"},
+        {"type": "plain_text", "name": "CENTER_LNG", "text": "116.0735"},
+        {"type": "plain_text", "name": "GEOFENCE_RADIUS_M", "text": "25000"},
+        # Cache laluan D1 — 24 jam
+        {"type": "plain_text", "name": "ROUTE_CACHE_TTL_MS", "text": "86400000"},
     ],
-    "migrations": {"tag": "v1", "new_sqlite_classes": ["GridDO"]},
     "triggers": {"crons": ["*/5 * * * *"]},
     "observability": {"enabled": True},
 }
+
+# Kelas GridDO sudah berdaftar sebelum ini. Menghantar semula `migrations`
+# dengan tag yang sama gagal dengan 10074 ("already depended on by existing
+# Durable Objects") — Cloudflare tidak membenarkan tag yang sama diterapkan
+# dua kali. Set LALIN_SKIP_MIGRATIONS=1 untuk deploy semula.
+if not os.environ.get("LALIN_SKIP_MIGRATIONS"):
+    metadata["migrations"] = {"tag": "v1", "new_sqlite_classes": ["GridDO"]}
 
 src = open(BUNDLE, "rb").read()
 print(f"bundle: {len(src)} bait")

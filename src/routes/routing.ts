@@ -132,8 +132,9 @@ async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
 /**
  * Cache routing dalam D1.
  *
- * Routing jarang berubah untuk laluan yang sama, jadi cache 1 jam
- * menjimatkan panggilan OSRM dan mempercepatkan peta.
+ * Geometri jalan berubah sangat lambat, jadi laluan yang sama boleh
+ * dikekalkan berhari-hari. Panggilan pertama pergi ke OSRM; semua
+ * panggilan berikutnya dijawab dari D1 dalam milisaat.
  */
 export async function getRouteCached(
   c: Context<{ Bindings: Env }>,
@@ -160,18 +161,51 @@ export async function getRouteCached(
   }
 
   const result = await getRoute(c, points);
-  void saveRouteCache(c, key, result).catch(() => {});
+
+  // PENTING: daftarkan dengan `waitUntil`, JANGAN `void`.
+  //
+  // Kerja latar yang tidak didaftarkan boleh DIBATALKAN oleh runtime
+  // begitu balasan dihantar — dan D1 terhenti tanpa sebarang ralat.
+  // Gejala fosilnya: hanya sebahagian kecil tulisan yang muncul walaupun
+  // setiap panggilan berjaya (5 baris daripada 32 panggilan), dan cache
+  // kelihatan "tidak berfungsi" tanpa sebarang mesej ralat.
+  const saving = saveRouteCache(c, key, result).catch(() => {});
+  if (c.executionCtx?.waitUntil) {
+    c.executionCtx.waitUntil(saving);
+  } else {
+    void saving;
+  }
+
   return result;
 }
 
 function routeCacheKey(points: LatLng[]): string {
-  const raw = points.map((p) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`).join('|');
-  // hash ringkas — jangan guna crypto.subtle di sini (async)
-  let h = 0;
-  for (let i = 0; i < raw.length; i++) {
-    h = (h * 31 + raw.charCodeAt(i)) | 0;
-  }
-  return `route:${Math.abs(h).toString(36)}`;
+  // Kanonik dan TIDAK bergantung arah: A→B dan B→A ialah laluan yang
+  // sama dari segi data geometri, jadi dengan menyusun semula titik,
+  // satu entri cache berkhidmat untuk kedua-dua arah — ini hampir
+  // memergingkan kadar hit cache.
+  //
+  // Guna rentetan koordinat terus, BUKAN hash. Kunci TEXT dalam D1 tiada
+  // had panjang yang bermakna di sini, dan mengelakkan risiko
+  // *collision* — dua laluan berbeza berkongsi kunci dan yang kedua
+  // menerima geometri yang SALAH tanpa sebarang tanda. Cache yang
+  // salah lebih buruk daripada cache yang miss.
+  const norm = points
+    .map((p) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`)
+    .sort()
+    .join('|');
+  return `route:${norm}`;
+}
+
+/** Tempoh cache laluan (ms). Geometri jalan berubah lambat, jadi panjang. */
+const DEFAULT_ROUTE_CACHE_TTL_MS = 24 * 3_600_000;
+/** Had maksimum — elakkan nilai env yang pelik menyimpan terlalu lama. */
+const MAX_ROUTE_CACHE_TTL_MS = 7 * 24 * 3_600_000;
+
+function routeCacheTtlMs(env?: Env): number {
+  const n = Number(env?.ROUTE_CACHE_TTL_MS);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_ROUTE_CACHE_TTL_MS;
+  return Math.min(n, MAX_ROUTE_CACHE_TTL_MS);
 }
 
 async function saveRouteCache(
@@ -184,6 +218,6 @@ async function saveRouteCache(
      VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, expires_at = excluded.expires_at`,
   )
-    .bind(key, JSON.stringify(result), Date.now() + 3_600_000)
+    .bind(key, JSON.stringify(result), Date.now() + routeCacheTtlMs(c.env))
     .run();
 }

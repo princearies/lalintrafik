@@ -35,9 +35,23 @@ crons = ["*/5 * * * *"]
 [vars]
 # OSRM awam — tukar ke tumpangan sendiri bila trafik meningkat
 OSRM_BASE_URL = "https://router.project-osrm.org/route/v1/driving"
-MAX_RADIUS_M = "5000"
+MAX_RADIUS_M = "25000"
 MAX_LIMIT = "200"
 DEFAULT_LIMIT = "50"
 DEFAULT_TTL_MS = "3600000"
 MAX_PEERS_PER_CELL = "500"
+
+# ------------------------------------------------------------
+#  Zon operasi — Kota Kinabalu, Sabah
+#  25 km meliputi Sepanggar, Inanam, Donggongon, Penampang,
+#  Putatan dan KKIA.
+# ------------------------------------------------------------
+CENTER_LAT = "5.9804"
+CENTER_LNG = "116.0735"
+GEOFENCE_RADIUS_M = "25000"
+
+# ------------------------------------------------------------
+#  Cache laluan (D1) — 24 jam. Geometri jalan berubah lambat.
+# ------------------------------------------------------------
+ROUTE_CACHE_TTL_MS = "86400000"
 
