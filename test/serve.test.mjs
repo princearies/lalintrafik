@@ -129,5 +129,30 @@ console.log('\n[6] Panel mudah alih boleh tutup');
   ok(/\.log\s*\{\s*display:\s*none/.test(html), '.log tersembunyi pada telefon');
 }
 
+console.log('\n[7] Log kecil dan boleh lipat');
+{
+  // Sebelum ini log ialah panel penuh 340px yang selalu kelihatan dan
+  // penuh dengan "muat 7 laporan" yang sama pada setiap moveend.
+  const html = await (await app.request('/')).text();
+
+  ok(html.includes('id="log-head"'), 'kepala cip log wujud');
+  ok(html.includes('id="log-body"'), 'badan log berasingan wujud');
+  ok(html.includes("📋 Log"), 'tajuk cip log wujud');
+  ok(html.includes('class="chev"'), 'penunjuk lipatan wujud');
+
+  // badan TERSEMBUNYI pada mulanya, hanya kelihatan apabila .open
+  ok(/\.log \.log-body\s*\{\s*display:\s*none/.test(html), '.log-body tersembunyi pada mulanya');
+  ok(/\.log\.open \.log-body\s*\{\s*display:\s*block/.test(html), '.log.open membukanya');
+
+  // log() menulis ke badan, BUKAN ke bekas penuh
+  ok(html.includes('logBody.appendChild(d)'), 'log() menulis ke log-body');
+  ok(!/logEl\.appendChild\(d\)/.test(html), 'log() tidak lagi menulis ke bekas penuh');
+  ok(html.includes('logBody.children.length > 40'), 'log dipangkas kepada 40 baris');
+  ok(html.includes("logHead.addEventListener('click'"), 'cip boleh diklik');
+
+  // bunyi bising: hanya log apabila bilangan berubah
+  ok(html.includes('reports.length !== state.lastCount'), 'log "muat N laporan" hanya bila berubah');
+}
+
 console.log(`\n${pass} PASS, ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

@@ -33,12 +33,30 @@
           color: #8b949e; padding: 2px 0; }
   .stat b { color: #e6edf3; font-variant-numeric: tabular-nums; }
 
+  /* ------------------------------------------------------------
+     Log — KECIL dan BOLEH LIPAT.
+     Ia bermula sebagai cip satu baris ("📋 Log"); ketik untuk mengembang.
+     Sebelum ini ia panel penuh 340px yang selalu kelihatan.
+     ------------------------------------------------------------ */
   .log {
     position: absolute; bottom: 12px; left: 12px; z-index: 10;
-    background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 12px;
-    padding: 10px 12px; width: 340px; max-height: 190px; overflow: auto;
+    background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 10px;
+    width: 340px; max-width: calc(100vw - 24px);
+    overflow: hidden;
     font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    backdrop-filter: blur(8px);
   }
+  .log .log-head {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 10px; cursor: pointer; user-select: none;
+    font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #8b949e;
+  }
+  .log .log-head:hover { background: #161b22; }
+  .log .log-head .chev { margin-left: auto; transition: transform .2s; }
+  .log.open .log-head .chev { transform: rotate(180deg); }
+  .log .log-body { display: none; max-height: 150px; overflow: auto; padding: 0 10px 8px; }
+  .log.open .log-body { display: block; }
   .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .log .ok   { color: #3fb950; }
   .log .err  { color: #f85149; }
@@ -228,7 +246,12 @@
   Menunggu laluan API…
 </div>
 
-<div class="log" id="log"></div>
+<div class="log" id="log">
+  <div class="log-head" id="log-head" role="button" tabindex="0" aria-expanded="false">
+    <span>📋 Log</span><span class="chev">▾</span>
+  </div>
+  <div class="log-body" id="log-body"></div>
+</div>
 
 <div class="hotspots" id="hotspots">
   <h2>🔥 Hotspot terpanas</h2>
@@ -354,6 +377,7 @@ const state = {
   following: false,       // kamera mengikut pengguna (mod "ikut saya")
   trail: [],              // jejak pergerakan, [lng, lat]
   lastSessionPush: 0,     // doh::now_ms sesi terakhir dihantar
+  lastCount: null,        // bilangan laporan lepas — elak log berulang
 };
 
 /** Had geofence zon operasi (meter) — mesti sepadan dengan pelayan. */
@@ -366,15 +390,45 @@ const HOTSPOT_LIMIT = 10;
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
+const logBody = $('log-body');
+const logHead = $('log-head');
 
+/**
+ * Tulis ke log.
+ *
+ * Hanya SIMpan dalam `log-body` — kepala cip kekal di atasnya. Log juga
+ * dipangkas kepada 40 baris supaya ia tidak pernah menjadi besar.
+ */
 function log(kind, msg) {
   const d = document.createElement('div');
   d.className = kind;
   const t = new Date().toLocaleTimeString('ms');
   d.textContent = `${t} ${msg}`;
-  logEl.appendChild(d);
-  logEl.scrollTop = logEl.scrollHeight;
-  while (logEl.children.length > 60) logEl.removeChild(logEl.firstChild);
+  logBody.appendChild(d);
+  logBody.scrollTop = logBody.scrollHeight;
+  while (logBody.children.length > 40) logBody.removeChild(logBody.firstChild);
+
+  // Tukar tajuk cip kepada mesej terakhir supaya ada makluma walaupun
+  // log dilipat — tetapi jangan timbangkan ralat.
+  if (logHead && kind === 'err') {
+    const label = logHead.querySelector('span');
+    if (label) label.textContent = '⚠ Log';
+  }
+}
+
+/** Lipat / buka log (juga untuk papan kekunci). */
+function toggleLog(force) {
+  const open = force ?? !logEl.classList.contains('open');
+  logEl.classList.toggle('open', open);
+  if (logHead) logHead.setAttribute('aria-expanded', String(open));
+  if (open) logBody.scrollTop = logBody.scrollHeight;
+}
+
+if (logHead) {
+  logHead.addEventListener('click', () => toggleLog());
+  logHead.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLog(); }
+  });
 }
 
 function api(path, opts = {}) {
@@ -776,7 +830,12 @@ async function refresh() {
     // Penanda individu hanya dalam mod "Semua laporan" — lihat applyViewMode().
     for (const r of reports) upsertMarker(r);
 
-    log('info', `muat ${reports.length} laporan`);
+    // Jangan log pada setiap moveend — `refresh()` dipanggil setiap kali
+    // peta digerakkan, dan log penuh dengan "muat 7 laporan" yang sama.
+    if (reports.length !== state.lastCount) {
+      state.lastCount = reports.length;
+      log('info', `muat ${reports.length} laporan`);
+    }
   } catch (e) {
     log('err', e.message);
   }
