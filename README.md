@@ -6,7 +6,27 @@ Aplikasi web komuniti untuk laporan trafik, navigasi dan insiden — ala Waze, t
 
 **Siap untuk Android** — API REST dan WebSocket adalah tulen, tiada kekangenan framework frontend.
 
+**Buka app:** `https://mykira-map.mykira.workers.dev/`
+
 **Worker:** `https://mykira-map.mykira.workers.dev` · **Repo:** `github.com/princearies/mykira-map`
+
+---
+
+## Buka pada telefon
+
+URL di atas ialah **app itu sendiri** — Worker menyajikan HTML, jadi ia berfungsi
+tanpa sebarang konfigurasi pada mana-mana peranti:
+
+```
+https://mykira-map.mykira.workers.dev/
+```
+
+Frontend menggunakan URL **relatif** (`API_BASE` lalai kosong, diselesaikan
+kepada `location.origin`), jadi app berfungsi sama ada dibuka di desktop atau
+telefon tanpa perlu menukar tetapan.
+
+Untuk pembangunan tempatan, jalankan `npm run dev` dan set
+`localStorage.setItem('lalin.api', 'http://localhost:8787')`.
 
 ---
 
@@ -143,7 +163,8 @@ mykira-map/
 ├── db/
 │   └── schema.sql               ← 4 jadual (users, reports, live_sessions, route_cache)
 ├── src/
-│   ├── index.ts                 ← titik masuk Hono
+│   ├── index.ts                 ← titik masuk Hono + menyajikan app
+│   ├── frontendHtml.ts          ← DIJANA — jangan edit (lihat scripts/)
 │   ├── types.ts                 ← jenis + Env
 │   ├── lib/
 │   │   ├── errors.ts            ← ValidationError, AppError, pangkuh input
@@ -160,8 +181,9 @@ mykira-map/
 │   └── do/
 │       └── GridDO.ts            ← Durable Object siaran
 ├── frontend/
-│   └── index.html               ← demo MapLibre (buka terus di pelayar)
+│   └── index.html               ← app web (disajikan Worker pada `/`)
 ├── scripts/
+│   ├── build_frontend_ts.py     ← tukar index.html → src/frontendHtml.ts
 │   ├── deploy_worker_rest.py    ← deploy melalui REST API
 │   ├── apply_schema_remote.py   ← guna schema.sql melalui REST
 │   └── migrate_route_cache.py   ← wujudkan semula route_cache
@@ -173,6 +195,7 @@ mykira-map/
 │   ├── votes.test.mjs           ← confirm/dismiss (SQLite sebenar)
 │   ├── geofence.test.mjs        ← geofence koridor
 │   ├── route_cache.test.mjs     ← smart cache (SQLite sebenar)
+│   ├── serve.test.mjs           ← `/` memulangkan HTML; URL relatif
 │   └── _e2e_live.mjs            ← WebSocket→DO (perlu server hidup)
 ├── ARCHITECTURE.md
 └── wrangler.toml
@@ -205,9 +228,14 @@ npm run test:e2e    # 20 PASS — perlu `wrangler dev` sedang berjalan
 ### Maklumat
 
 ```http
-GET /              → nama, userAgent, zon operasi
+GET /              → app web (HTML) — buka terus pada pelayar atau telefon
+GET /api/v1/info   → nama, userAgent, zon operasi
 GET /healthz       → { status: "ok", ts }
 ```
+
+`GET /` dahulu memulangkan JSON maklumat. Ia kini menyajikan app itu sendiri,
+dan maklumat itu berpindah ke `/api/v1/info` supaya URL akar kekal berguna
+sebagai alamat app.
 
 ### Laporan
 

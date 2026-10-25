@@ -80,6 +80,38 @@
   .hotspots .bar.TRAFFIC_JAM  { background: #58a6ff; }
   .hotspots .bar.POLICE       { background: #a371f7; }
   .hotspots .bar.ROAD_CLOSURE { background: #f85149; }
+
+  /* ------------------------------------------------------------
+     Mudah alih.
+     Pada skrin sempit, panel panel ini (panel 268px, hotspot 264px,
+     log 340px) akan bertindan dan menjadikan peta tidak boleh
+     digunakan. Semuanya diregangkan kepada lebar penuh, panel hotspot
+     diletakkan di bawah, dan log ditolak ke atasnya supaya tidak
+     bertindan.
+     ------------------------------------------------------------ */
+  @media (max-width: 640px) {
+    .panel {
+      width: calc(100vw - 20px); left: 10px; top: 10px;
+      padding: 10px; max-height: 46vh; overflow-y: auto;
+    }
+    .panel h1 { font-size: 15px; }
+    .panel p  { font-size: 11px; margin-bottom: 8px; }
+
+    /* butang lebih besar untuk sentuhan jari */
+    button { padding: 10px 12px; font-size: 13px; }
+    #types button { padding: 8px 9px; font-size: 12px; }
+
+    .hotspots {
+      width: calc(100vw - 20px); right: 10px; bottom: 10px;
+      max-height: 24vh; padding: 8px 10px;
+    }
+    .log {
+      width: calc(100vw - 20px); left: 10px;
+      bottom: calc(24vh + 18px);   /* di atas panel hotspot, bukan bertindan */
+      max-height: 18vh; font-size: 10px;
+    }
+    .hint { display: none; }   /* tiada ruang untuk hint pada telefon */
+  }
 </style>
 </head>
 <body>
@@ -137,7 +169,24 @@
 // ============================================================
 //  Konfigurasi
 // ============================================================
-const API_BASE = localStorage.getItem('lalin.api') || 'http://localhost:8787';
+/**
+ * Asal API. KOSONG bermaksud "sama seperti laman ini" — jadi app berfungsi
+ * tanpa sebarang konfigurasi sama ada dibuka di pelayar desktop, pada
+ * telefon, atau melalui domain lain.
+ *
+ * Untuk melayan diri sendiri secara tempatan, jalankan `npm run dev` dan
+ * set localStorage: lalin.api = 'http://localhost:8787'.
+ */
+const API_BASE = localStorage.getItem('lalin.api') || '';
+
+/**
+ * Origin penuh untuk panggilan fetch dan WebSocket.
+ * Kosong → gunakan `location.origin` (satu origin, tanpa CORS lintas).
+ */
+const ORIGIN = API_BASE
+  ? new URL(API_BASE).origin
+  : (typeof location !== 'undefined' ? location.origin : '');
+
 const DEVICE_ID = (() => {
   let id = localStorage.getItem('lalin.device');
   if (!id) { id = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('lalin.device', id); }
@@ -587,8 +636,8 @@ function estimateRadius() {
 // ============================================================
 function wsUrl() {
   const cell = geohash(state.center.lat, state.center.lng, 6);
-  const proto = API_BASE.startsWith('https') ? 'https' : 'http';
-  return `${proto}://${API_BASE.replace(/^https?:\/\//, '')}/api/v1/ws?cell=${cell}`;
+  // `ORIGIN` sudah selesai http/https — tukar kepada ws/wss untuk WebSocket.
+  return `${ORIGIN.replace(/^http/, 'ws')}/api/v1/ws?cell=${cell}`;
 }
 
 function connectWs() {
@@ -728,10 +777,10 @@ map.on('moveend', () => {
 async function boot() {
   try {
     const h = await api('/healthz');
-    $('hint').innerHTML = `API: <b>${API_BASE}</b><br>peranti: <code>${DEVICE_ID.slice(0, 12)}…</code><br>tukar: <code>localStorage.setItem('lalin.api','https://…')</code>`;
+    $('hint').innerHTML = `API: <b>${ORIGIN}</b><br>peranti: <code>${DEVICE_ID.slice(0, 12)}…</code>`;
     log('ok', `API sihat — ${h.status}`);
   } catch (e) {
-    $('hint').innerHTML = `⚠️ <b>API tidak dicapai</b> di ${API_BASE}<br>Jalankan <code>npm run dev</code> atau tukar:<br><code>localStorage.setItem('lalin.api','https://…')</code>`;
+    $('hint').innerHTML = `⚠️ <b>API tidak dicapai</b> di ${ORIGIN}<br>Pastikan Worker sudah dideploy, dan cuba muat semula laman ini.`;
     log('err', `API tidak dicapai: ${e.message}`);
   }
   refresh();

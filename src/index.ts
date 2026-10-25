@@ -11,6 +11,7 @@ import { hotspots } from './routes/hotspots';
 import { getRouteCached, USER_AGENT } from './routes/routing';
 import { requireLat, requireLng } from './lib/errors';
 import { MAP_CENTER, MAP_RADIUS_M } from './lib/geofence';
+import { FRONTEND_HTML } from './frontendHtml';
 
 type AppEnv = {
   Bindings: Env;
@@ -27,8 +28,17 @@ app.onError(errorHandler());
 app.use('*', cors());
 app.use('*', timing());
 
-// ---------- siaran kesihatan ----------
-app.get('/', (c) => {
+// ---------- aplikasi web ----------
+// Pelayan tidak mempunyai direktori statik, jadi HTML dibawa di dalam
+// bundle (dijana oleh scripts/build_frontend_ts.py). Frontend menggunakan
+// URL RELATIF, jadi `/` ini berfungsi tanpa konfigurasi pada sebarang
+// peranti — desktop atau telefon.
+app.get('/', (c) => c.html(FRONTEND_HTML));
+
+app.get('/healthz', (c) => c.json({ status: 'ok', ts: Date.now() }));
+
+// Maklumat kini di bawah API, supaya `/` kekal sebagai app itu sendiri.
+app.get('/api/v1/info', (c) => {
   return c.json({
     name: 'Mykira Map',
     version: '1.0.0',
@@ -42,8 +52,6 @@ app.get('/', (c) => {
     },
   });
 });
-
-app.get('/healthz', (c) => c.json({ status: 'ok', ts: Date.now() }));
 
 // ---------- API bersarang ----------
 app.route('/api/v1/reports', reports);
@@ -112,3 +120,7 @@ export default {
 
 // ---------- Jenis untuk Durable Object ----------
 export { GridDO } from './do/GridDO';
+
+// ---------- Untuk ujian ----------
+// `app.request()` membolehkan ujian memukul laluan sebenar tanpa pelayan.
+export { app };
