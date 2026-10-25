@@ -7,11 +7,11 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:create": "wrangler d1 create lalintrafik",
-    "db:apply": "wrangler d1 execute lalintrafik --remote --file=db/schema.sql",
-    "db:apply:local": "wrangler d1 execute lalintrafik --local --file=db/schema.sql",
+    "db:create": "wrangler d1 create mykira-map",
+    "db:apply": "python scripts/apply_schema_remote.py",
+    "db:apply:local": "wrangler d1 execute mykira-map --local --file=db/schema.sql",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/schema.test.mjs test/geo.test.mjs test/data.test.mjs test/routing.test.mjs test/votes.test.mjs test/geofence.test.mjs test/route_cache.test.mjs",
+    "test": "node --test test/schema.test.mjs test/geo.test.mjs test/data.test.mjs test/routing.test.mjs test/votes.test.mjs test/geofence.test.mjs test/route_cache.test.mjs test/hotspots.test.mjs",
     "test:e2e": "node test/_e2e_live.mjs"
   },
   "dependencies": {

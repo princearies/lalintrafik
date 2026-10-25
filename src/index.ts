@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import type { Env } from './types';
 import { cors, errorHandler, timing } from './middleware/cors';
 import { reports } from './routes/reports';
+import { hotspots } from './routes/hotspots';
 import { getRouteCached, USER_AGENT } from './routes/routing';
 import { requireLat, requireLng } from './lib/errors';
 import { MAP_CENTER, MAP_RADIUS_M } from './lib/geofence';
@@ -46,6 +47,7 @@ app.get('/healthz', (c) => c.json({ status: 'ok', ts: Date.now() }));
 
 // ---------- API bersarang ----------
 app.route('/api/v1/reports', reports);
+app.route('/api/v1/hotspots', hotspots);
 
 // ---------- routing (OSRM) ----------
 app.get('/api/v1/routing', async (c) => {

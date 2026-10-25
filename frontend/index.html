@@ -48,6 +48,38 @@
   .hint { position: absolute; top: 12px; right: 12px; z-index: 10;
           background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 10px;
           padding: 8px 11px; font-size: 11px; color: #8b949e; max-width: 250px; }
+
+  /* ------------------------------------------------------------
+     Panel hotspot — senarai sel paling panas, disusun menurun.
+     Setiap baris boleh diklik untuk terbang ke lokasi itu.
+     ------------------------------------------------------------ */
+  .hotspots {
+    position: absolute; bottom: 12px; right: 12px; z-index: 10;
+    background: rgba(11,15,20,.92); border: 1px solid #21262d; border-radius: 12px;
+    padding: 10px 12px; width: 264px; max-height: 300px; overflow: auto;
+    backdrop-filter: blur(8px);
+  }
+  .hotspots h2 { margin: 0 0 6px; font-size: 12px; color: #8b949e; font-weight: 600;
+                 letter-spacing: .04em; text-transform: uppercase; }
+  .hotspots .cell {
+    display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+    border-radius: 8px; cursor: pointer; font-size: 12px;
+  }
+  .hotspots .cell:hover { background: #161b22; }
+  .hotspots .rank { color: #8b949e; width: 16px; text-align: right; flex: none;
+                    font-variant-numeric: tabular-nums; }
+  .hotspots .bar { height: 6px; border-radius: 3px; flex: none; }
+  .hotspots .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hotspots .n { color: #8b949e; flex: none; font-variant-numeric: tabular-nums; }
+  .hotspots .empty { color: #8b949e; font-size: 12px; padding: 4px 2px; }
+
+  /* warna mengikut jenis dominan — mesti sepadan dengan TYPE_META */
+  .hotspots .bar.ACCIDENT     { background: #f85149; }
+  .hotspots .bar.SPEED_TRAP   { background: #d29922; }
+  .hotspots .bar.HAZARD       { background: #db6d28; }
+  .hotspots .bar.TRAFFIC_JAM  { background: #58a6ff; }
+  .hotspots .bar.POLICE       { background: #a371f7; }
+  .hotspots .bar.ROAD_CLOSURE { background: #f85149; }
 </style>
 </head>
 <body>
@@ -76,6 +108,11 @@
     <button id="route">🧭 Arah ke sini</button>
   </div>
 
+  <div class="row">
+    <button id="toggle-hotspot" class="active">🔥 Hotspot</button>
+    <button id="toggle-points">📍 Semua laporan</button>
+  </div>
+
   <hr style="border:none;border-top:1px solid #21262d;margin:10px 0" />
 
   <div class="stat"><span>Laporan berdekatan</span><b id="s-count">0</b></div>
@@ -90,6 +127,11 @@
 </div>
 
 <div class="log" id="log"></div>
+
+<div class="hotspots" id="hotspots">
+  <h2>🔥 Hotspot terpanas</h2>
+  <div id="hotspot-list"><div class="empty">Memuatkan…</div></div>
+</div>
 
 <script>
 // ============================================================
@@ -124,10 +166,18 @@ const state = {
   markers: new Map(),
   routeLayer: null,
   wsRetry: 0,
+  // Paparan hotspot: giliran antara kluster (hotspot) dan penanda individu.
+  hotspotMode: true,
+  hotspotsReady: false,
 };
 
 /** Had geofence zon operasi (meter) — mesti sepadan dengan pelayan. */
 const GEOFENCE_RADIUS_M = 90000;
+
+/** Saiz sel grid hotspot pada peta (mesti sepadan dengan pelayan). */
+const HOTSPOT_GRID_DP = 3;
+/** Bilangan hotspot teratas yang disenaraikan. */
+const HOTSPOT_LIMIT = 10;
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
@@ -185,6 +235,129 @@ const map = new maplibregl.Map({
 });
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
 
+// ------------------------------------------------------------
+//  Lapisan hotspot — kluster GeoJSON native MapLibre (supercluster)
+//
+//  Kluster dikira di PELAYAN (/api/v1/hotspots) untuk senarai kedudukan;
+//  di peta pula MapLibre mengikutkan sendiri dari titik mentah. Kedua-duanya
+//  menggunakan ROUND(lat, 3) supaya angka yang dipaparkan sepadan.
+// ------------------------------------------------------------
+const HOTSPOT_SRC = 'hotspots';
+
+// warna & ikon mengikut jenis — mesti sepadan dengan TYPE_META
+const TYPE_COLOR = Object.fromEntries(
+  Object.entries(TYPE_META).map(([k, v]) => [k, v.color]),
+);
+
+map.on('load', () => {
+  // `cluster: true` menghidupkan supercluster — tiada pek tambahan.
+  map.addSource(HOTSPOT_SRC, {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+    cluster: true,
+    // di bawah z14, laporan individu dipaparkan terus
+    clusterMaxZoom: 14,
+    clusterRadius: 55,
+  });
+
+  // gumpalan — saiz & warna mengikut bilangan laporan
+  map.addLayer({
+    id: 'hotspot-clusters',
+    type: 'circle',
+    source: HOTSPOT_SRC,
+    filter: ['has', 'point_count'],
+    paint: {
+      'circle-radius': [
+        'step', ['get', 'point_count'],
+        18, 3, 24, 10, 32, 25, 40, 60, 48,
+      ],
+      // biru (kecil) → kuning → merah (panas)
+      'circle-color': [
+        'step', ['get', 'point_count'],
+        '#1f6feb', 5, '#d29922', 20, '#f85149',
+      ],
+      'circle-opacity': 0.88,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#ffffff',
+    },
+  });
+
+  // bilangan di tengah gumpalan
+  map.addLayer({
+    id: 'hotspot-count',
+    type: 'symbol',
+    source: HOTSPOT_SRC,
+    filter: ['has', 'point_count'],
+    layout: {
+      'text-field': ['get', 'point_count_abbreviated'],
+      'text-size': 13,
+      'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+    },
+    paint: { 'text-color': '#ffffff' },
+  });
+
+  // titik individu — warna ikut jenis insiden
+  map.addLayer({
+    id: 'hotspot-points',
+    type: 'circle',
+    source: HOTSPOT_SRC,
+    filter: ['!', ['has', 'point_count']],
+    paint: {
+      'circle-radius': 11,
+      'circle-color': [
+        'match', ['get', 'type'],
+        ...Object.entries(TYPE_COLOR).flat(),
+        '#3fb950',
+      ],
+      'circle-opacity': 0.92,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#ffffff',
+    },
+  });
+
+  // klik gumpalan → zum masuk untuk melihat laporan di dalamnya
+  map.on('click', 'hotspot-clusters', (e) => {
+    const f = map.queryRenderedFeatures(e.point, { layers: ['hotspot-clusters'] })[0];
+    if (!f) return;
+    const [lng, lat] = f.geometry.coordinates;
+    map.easeTo({ center: [lng, lat], zoom: Math.min(16, map.getZoom() + 2) });
+  });
+
+  // klik titik → popout dengan butang undi
+  map.on('click', 'hotspot-points', (e) => {
+    const f = map.queryRenderedFeatures(e.point, { layers: ['hotspot-points'] })[0];
+    if (!f) return;
+    const p = f.properties;
+    const meta = TYPE_META[p.type] || { icon: '📍' };
+    new maplibregl.Popup({ offset: 14, closeButton: false })
+      .setLngLat(f.geometry.coordinates)
+      .setHTML(
+        `<div style="min-width:140px">
+           <b>${meta.icon} ${p.type}</b>
+           <div style="color:#8b949e;font-size:11px;margin-top:2px">
+             ✓${p.confirmCount} ✗${p.dismissCount}
+           </div>
+           ${p.note ? `<div style="font-size:11px;margin:4px 0">${String(p.note).replace(/</g, '&lt;')}</div>` : ''}
+           <div style="display:flex;gap:5px;margin-top:6px">
+             <button onclick="vote('${p.id}',1)" style="font-size:11px;padding:3px 8px">✓ Ada</button>
+             <button onclick="vote('${p.id}',0)" style="font-size:11px;padding:3px 8px">✗ Tiada</button>
+           </div>
+         </div>`,
+      )
+      .addTo(map);
+  });
+
+  // penunjuk tangan semasa melayang di atas sesuatu yang boleh diklik
+  for (const id of ['hotspot-clusters', 'hotspot-points']) {
+    map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+  }
+
+  state.hotspotsReady = true;
+  applyViewMode();
+  log('info', 'lapisan hotspot sedia');
+});
+
 // penanda lokasi pengguna
 const meEl = document.createElement('div');
 meEl.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#1f6feb;border:3px solid #fff;box-shadow:0 0 0 4px rgba(31,111,235,.25)';
@@ -221,12 +394,122 @@ function markerFor(report) {
 function upsertMarker(report) {
   const existing = state.markers.get(report.id);
   if (existing) existing.remove();
-  state.markers.set(report.id, markerFor(report).addTo(map));
+  const m = markerFor(report);
+  state.markers.set(report.id, m);
+  // Hanya dipaparkan dalam mod "Semua laporan" — lihat applyViewMode().
+  // Penanda kekal dalam `state.markers` supaya togol tidak kehilangan data.
+  if (!state.hotspotMode) m.addTo(map);
 }
 
 function removeMarker(id) {
   const m = state.markers.get(id);
   if (m) { m.remove(); state.markers.delete(id); }
+}
+
+// ============================================================
+//  Hotspot — GeoJSON untuk lapisan kluster
+// ============================================================
+/** Tukar senarai laporan menjadi GeoJSON FeatureCollection. */
+function hotspotGeoJSON(reports) {
+  return {
+    type: 'FeatureCollection',
+    features: reports.map((r) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
+      properties: {
+        id: r.id,
+        type: r.type,
+        note: r.note ?? '',
+        severity: r.severity ?? 0,
+        confirmCount: r.confirmCount ?? 0,
+        dismissCount: r.dismissCount ?? 0,
+      },
+    })),
+  };
+}
+
+/** Segerakkan data kluster dengan laporan semasa. */
+function syncHotspots(reports) {
+  if (!state.hotspotsReady) return;
+  map.getSource(HOTSPOT_SRC).setData(hotspotGeoJSON(reports));
+}
+
+/**
+ * Togol antara paparan hotspot (klaster) dan penanda individu.
+ *
+ * Kedua-duanya TIDAK dipaparkan serentak — pada z10 klaster memberi gambaran
+ * kepadatan, manakala penanda individu menjadi tidak berguna apabila beratus-ratus
+ * bertindan. Memaparkan kedua-duanya hanya menghasilkan peta yang sesak.
+ */
+function applyViewMode() {
+  const hotspotLayers = ['hotspot-clusters', 'hotspot-count', 'hotspot-points'];
+  const on = state.hotspotMode;
+
+  if (state.hotspotsReady) {
+    for (const id of hotspotLayers) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    }
+  }
+  // penanda individu hanya dalam mod "Semua laporan"
+  for (const m of state.markers.values()) {
+    if (!on) m.addTo(map); else m.remove();
+  }
+  $('toggle-hotspot').classList.toggle('active', on);
+  $('toggle-points').classList.toggle('active', !on);
+}
+
+// ============================================================
+//  Senarai kedudukan hotspot (dari /api/v1/hotspots)
+// ============================================================
+/** Nama mudah untuk satu sel — jarak dari Putatan, bukan nama jalan. */
+function cellName(lat, lng) {
+  const dLat = lat - 5.8943, dLng = lng - 116.0505;
+  const km = Math.round(Math.hypot(dLat * 111.32, dLng * 111.32) * 10) / 10;
+  if (km < 1) return 'Pusat Putatan';
+  const arah = dLat > 0 ? 'utara' : 'selatan';
+  return `${km} km ${arah} Putatan`;
+}
+
+async function renderHotspots() {
+  const b = map.getBounds();
+  const list = $('hotspot-list');
+  try {
+    const res = await api(
+      `/api/v1/hotspots?minLat=${b.getSouth()}&maxLat=${b.getNorth()}` +
+      `&minLng=${b.getWest()}&maxLng=${b.getEast()}` +
+      `&gridDp=${HOTSPOT_GRID_DP}&limit=${HOTSPOT_LIMIT}`,
+    );
+    const rows = res.data;
+    if (!rows.length) {
+      list.innerHTML = '<div class="empty">Tiada laporan dalam pandangan ini</div>';
+      return;
+    }
+
+    const max = rows[0].total;
+    list.innerHTML = rows.map((h) => {
+      const meta = TYPE_META[h.dominantType] || { icon: '📍' };
+      const w = Math.max(8, Math.round((h.total / max) * 72));
+      return (
+        `<div class="cell" data-lat="${h.lat}" data-lng="${h.lng}" data-zoom="13">
+           <span class="rank">${h.rank}</span>
+           <span class="bar ${h.dominantType}" style="width:${w}px" title="${h.total} laporan"></span>
+           <span class="name">${meta.icon} ${cellName(h.lat, h.lng)}</span>
+           <span class="n">${h.total}</span>
+         </div>`
+      );
+    }).join('');
+
+    for (const el of list.querySelectorAll('.cell')) {
+      el.onclick = () => {
+        map.flyTo({
+          center: [Number(el.dataset.lng), Number(el.dataset.lat)],
+          zoom: Number(el.dataset.zoom) || 13,
+        });
+      };
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="empty">Hotspot tidak tersedia: ${e.message}</div>`;
+  }
 }
 
 window.vote = async (id, isConfirm) => {
@@ -253,10 +536,18 @@ async function refresh() {
     const near = reports.filter((r) => (r.distanceM ?? 9e9) <= 5000).length;
     $('s-near').textContent = near;
     for (const r of reports) upsertMarker(r);
+
+    // Lapisan kluster dibina daripada titik mentah yang sama — satu panggilan.
+    syncHotspots(reports);
+
     log('info', `muat ${reports.length} laporan`);
   } catch (e) {
     log('err', e.message);
   }
+
+  // Senarai kedudukan hotspot — panggilan kedua, dari endpoint agregasi.
+  // Gagal di sini tidak boleh menggagalkan peta (kluster tetap berfungsi).
+  renderHotspots().catch(() => {});
 }
 
 function estimateRadius() {
@@ -395,6 +686,10 @@ $('send').onclick = sendReport;
 $('locate').onclick = locate;
 $('toggle-ws').onclick = () => { if (state.ws) { state.ws.close(); } else connectWs(); };
 $('route').onclick = route;
+
+// Togol hotspot ↔ penanda individu
+$('toggle-hotspot').onclick = () => { state.hotspotMode = true; applyViewMode(); };
+$('toggle-points').onclick = () => { state.hotspotMode = false; applyViewMode(); };
 
 map.on('moveend', () => {
   const c = map.getCenter();

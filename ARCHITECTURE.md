@@ -187,6 +187,27 @@ Client        Worker              D1 cache           OSRM
   │ ◀── 200 ─────┤                    │                │
 ```
 
+### 2.5 Hotspot (agregasi kepadatan)
+
+```
+Client        Worker                          D1
+  │ GET /hotspots?gridDp=3&minLat=…&maxLat=… │
+  ├─────────────────────────────────────────▶│
+  │            1 pertanyaan GROUP BY ROUND() │
+  │            WHERE status='ACTIVE'         │
+  │              AND expires_at > now()      │
+  │              AND lat BETWEEN …           │
+  │            HAVING COUNT(*) >= minCount   │
+  │            ORDER BY total DESC LIMIT n   │
+  │◀─────────────────────────────────────────┤
+  │ normalisasi heat = total / max(total)    │
+```
+
+Tiada jadual baharu dan tiada pek — agregasi ialah pandangan baca sahaja
+atas `reports`, jadi ia tidak pernah tidak selaras dengan laporan sebenar.
+`heat` dinormalkan 0..1 supaya klien tidak perlu tahu jumlah mutlak, dan
+`dominantType` dipilih daripada tindan supaya warna ikon konsisten.
+
 ---
 
 ## 3. Skema Data (D1)

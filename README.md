@@ -18,6 +18,7 @@ Aplikasi web komuniti untuk laporan trafik, navigasi dan insiden — ala Waze, t
 | Kuari berdekatan | `GET /api/v1/reports/nearby` — peti bounding + Haversine, di bawah 5ms |
 | Masa nyata | WebSocket ke Durable Object, siaran geofenced kepada 8 sel jiranan |
 | Navigasi | `GET /api/v1/routing` — OSRM dengan **smart cache D1** |
+| Hotspot | `GET /api/v1/hotspots` — agregasi kepadatan grid + lapisan kluster |
 | Kepercayaan komuniti | `confirm` / `dismiss` → skor keyakinan 0–100 |
 | TTL automatik | laporan luput mengikut jenis; cron `*/5 * * * *` membersihkan |
 
@@ -220,6 +221,53 @@ GET /api/v1/routing?lat1=5.9804&lng1=116.0735&lat2=5.4500&lng2=115.7300
 Karakter respons: `{ success, data: { distanceM, durationS, geometry, provider, cached } }`
 — `provider` ialah `"osrm"` untuk laluan baharu dan `"cache"` untuk yang
 dibaca dari D1.
+
+### Hotspot
+
+```http
+GET /api/v1/hotspots?gridDp=3&limit=50&minCount=1&minLat=&maxLat=&minLng=&maxLng=
+```
+
+Satu pertanyaan SQL: kumpulkan laporan mengikut `ROUND(lat, dp)` / `ROUND(lng, dp)`
+dan susun menurun mengikut jumlah. Tiada jadual baharu, tiada pek — selamat
+dipanggil kerap oleh Android.
+
+| Parameter | Julat | Lalai | Kesan |
+|---|---|---|---|
+| `gridDp` | 1–5 | 3 | kedalaman grid (~111 m pada dp 3) |
+| `limit` | 1–200 | 50 | bilangan sel dipulangkan |
+| `minCount` | ≥1 | 1 | buang sel lebih rendah daripada ini |
+| `minLat`…`maxLng` | — | geofence penuh | peti pandangan |
+
+Nilai di luar julat **dikelimkan**, bukan ditolak; nilai tak sah jatuh balik
+ke lalai. Kotak lalai dikelimkan kepada `[-90, 90]` / `[-180, 180]` supaya
+`meta.bbox` tidak pernah mengeluarkan koordinat mustahil.
+
+Karakter respons:
+
+```jsonc
+{
+  "success": true,
+  "data": [{
+    "rank": 1, "lat": 5.894, "lng": 116.05,
+    "total": 6,                      // laporan dalam sel ini
+    "dominantType": "HAZARD",        // untuk warna ikon
+    "confidenceAvg": 17,             // purata keyakinan komuniti
+    "heat": 1.0,                     // 0..1, normal terhadap sel terpanas
+    "breakdown": { "accident": 1, "speedTrap": 0, "hazard": 5,
+                   "trafficJam": 0, "police": 0, "roadClosure": 0 }
+  }],
+  "meta": { "gridDp": 3, "cellMeters": 111, "count": 1, "bbox": { } }
+}
+```
+
+`heat` dinormalkan supaya klien mewarnakan peta tanpa perlu tahu jumlah mutlak.
+Laporan `DISMISSED` dan yang telah luput dikecualikan.
+
+> **Perangkap SQLite.** `ROUND(x, 3)` bukan "bundar ke atas":
+> `ROUND(116.0505, 3)` = **116.050**, bukan 116.051. Dua laporan yang
+> berjarak 1 m tidak semestinya berada dalam sel yang sama. Ini kelakaran
+> SQLite, dan dikunci oleh ujian `test/hotspots.test.mjs` bahagian [7].
 
 ### Masa nyata
 
