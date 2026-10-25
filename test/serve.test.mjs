@@ -87,5 +87,21 @@ console.log('\n[4] Frontend menggunakan URL RELATIF');
     'localhost:8787 bukan lagi nilai lalai (app gagal pada telefon)');
 }
 
+console.log('\n[5] boot() benar-benar dipanggil');
+{
+  // Pepijat sebenar: `boot()` TIDAK dipanggil. App terus berfungsi kerana
+  // `locate()` memicu `refresh()` melalui `moveend`, tetapi petunjuk kekal
+  // sebagai teks placeholder "Menunggu laluan API…" selamanya — pemeriksaan
+  // kesihatan API tidak pernah berlaku.
+  const html = await (await app.request('/')).text();
+  const js = html.slice(html.indexOf('<script>'));
+  // `async function boot()` mengandungi "boot()" tetapi BUKAN "boot();" —
+  // jadi pencarian "boot();" hanya berjaya jika ada panggilan sebenar.
+  ok(js.includes('boot();'), 'boot() dipanggil (bukan sekadar ditakrif)');
+  ok(/async function boot\(\)\s*\{/.test(js), 'boot() masih ditakrifkan');
+  ok(js.includes("Menunggu laluan API"), 'teks placeholder wujud dalam HTML');
+  ok(js.includes("$('hint').innerHTML"), 'boot() mengemas kini petunjuk');
+}
+
 console.log(`\n${pass} PASS, ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

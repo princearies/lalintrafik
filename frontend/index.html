@@ -774,6 +774,14 @@ map.on('moveend', () => {
 // ============================================================
 //  Permulaan
 // ============================================================
+/**
+ * Semak kesihatan API, kemudian muat laporan.
+ *
+ * MESTI dipanggil semasa permulaan — tanpa ini petunjuk kekal sebagai teks
+ * placeholder "Menunggu laluan API…" selamanya walaupun app berfungsi, kerana
+ * `locate()` hanya memicu `refresh()` dan `connectWs()` secara tidak langsung
+ * (melalui `moveend`), bukan pemeriksaan kesihatan ini.
+ */
 async function boot() {
   try {
     const h = await api('/healthz');
@@ -784,9 +792,12 @@ async function boot() {
     log('err', `API tidak dicapai: ${e.message}`);
   }
   refresh();
-  // WS disambung selepas lokasi diketahui (sel bergantung pada lokasi)
 }
 
+boot();
+
+// `locate()` melontar peta ke lokasi pengguna. Ini mencetuskan `moveend`
+// → `refresh()`, dan pada keberhasilan geolokasi → `connectWs()`.
 locate();
 setInterval(() => { if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({ kind: 'ping' })); }, 25000);
 </script>
